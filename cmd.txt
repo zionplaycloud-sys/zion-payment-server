@@ -1,0 +1,10 @@
+E:
+cd "ZionPlay Cloud launcher rw"
+npm install bcrypt
+node server.js
+
+http://localhost:3000/
+
+
+
+https://payment-server-nhle.onrender.com/
