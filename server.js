@@ -316,12 +316,11 @@ app.get("/admin-stats", async (req, res) => {
     fromDate.setDate(fromDate.getDate() - days);
 
     // ✅ SINGLE CLEAN QUERY
-    const { data, error } = await supabase
-      .from("payments")
-      .select("*")
-      .eq("status", "paid")
-      .gte("created_at", fromDate.toISOString());
-
+  const { data, error } = await supabase
+  .from("payments")
+  .select("*")
+  .eq("status", "paid")
+  .gte("created_at", fromDate.toISOString().split("T")[0]);
     console.log("📊 DATA FROM DB:", data);
 
     if (error) {
