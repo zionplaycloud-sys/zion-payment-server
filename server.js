@@ -10,84 +10,137 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Supabase
+// ================= DEBUG ENV =================
+console.log("SUPABASE URL:", process.env.SUPABASE_URL ? "OK" : "MISSING");
+console.log("SUPABASE KEY:", process.env.SUPABASE_KEY ? "OK" : "MISSING");
+
+// ================= SUPABASE =================
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-// 🔐 Razorpay
+// ================= RAZORPAY =================
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
   key_secret: process.env.RAZORPAY_SECRET
 });
 
-// 🟢 ROOT
+// ================= ROOT =================
 app.get("/", (req, res) => {
   res.send("Server is running 🚀");
 });
 
-// ================= SIGNUP =================
-app.post("/signup", async (req, res) => {
-  const { email, password } = req.body;
-
-  const { data: existing } = await supabase
-    .from("users")
-    .select("*")
-    .eq("username", email)
-    .maybeSingle();
-
-  if (existing) {
-    return res.json({ success: false, msg: "User exists" });
-  }
-
-  const { error } = await supabase.from("users").insert({
-    username: email,
-    password: password,
-    hours: 0,
-    pts: 0
-  });
+// ================= TEST DB =================
+app.get("/test-db", async (req, res) => {
+  const { data, error } = await supabase.from("users").select("*").limit(1);
 
   if (error) {
-    console.log("Signup error:", error);
-    return res.json({ success: false });
+    console.log("DB ERROR:", error);
+    return res.send("DB ERROR ❌");
   }
 
-  res.json({ success: true });
+  res.send("DB Connected ✅");
+});
+
+// ================= SIGNUP =================
+app.post("/signup", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    console.log("Signup:", email);
+
+    // check existing
+    const { data: existing, error: checkError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", email)
+      .maybeSingle();
+
+    if (checkError) {
+      console.log("Check error:", checkError);
+      return res.json({ success: false, msg: "DB error" });
+    }
+
+    if (existing) {
+      return res.json({ success: false, msg: "User exists" });
+    }
+
+    // insert
+    const { error: insertError } = await supabase.from("users").insert({
+      username: email,
+      password: password,
+      hours: 0,
+      pts: 0
+    });
+
+    if (insertError) {
+      console.log("Insert error:", insertError);
+      return res.json({ success: false, msg: "Signup failed" });
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.log("Signup crash:", err);
+    res.json({ success: false });
+  }
 });
 
 // ================= LOGIN =================
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const { data } = await supabase
-    .from("users")
-    .select("*")
-    .eq("username", email)
-    .eq("password", password)
-    .maybeSingle();
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", email)
+      .eq("password", password)
+      .maybeSingle();
 
-  if (!data) {
-    return res.json({ success: false });
+    if (error) {
+      console.log("Login error:", error);
+      return res.json({ success: false, msg: "DB error" });
+    }
+
+    if (!data) {
+      return res.json({ success: false, msg: "Invalid credentials" });
+    }
+
+    res.json({
+      success: true,
+      hrs: data.hours || 0,
+      pts: data.pts || 0
+    });
+
+  } catch (err) {
+    console.log("Login crash:", err);
+    res.json({ success: false });
   }
-
-  res.json({
-    success: true,
-    hrs: data.hours || 0,
-    pts: data.pts || 0
-  });
 });
 
 // ================= UPDATE TIME =================
 app.post("/update-time", async (req, res) => {
-  const { email, hrs } = req.body;
+  try {
+    const { email, hrs } = req.body;
 
-  await supabase
-    .from("users")
-    .update({ hours: hrs })
-    .eq("username", email);
+    const { error } = await supabase
+      .from("users")
+      .update({ hours: hrs })
+      .eq("username", email);
 
-  res.json({ success: true });
+    if (error) {
+      console.log("Update error:", error);
+      return res.json({ success: false });
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.log("Update crash:", err);
+    res.json({ success: false });
+  }
 });
 
 // ================= CREATE PAYMENT =================
@@ -117,38 +170,46 @@ app.post("/create-order", async (req, res) => {
 
 // ================= WEBHOOK =================
 app.post("/webhook", async (req, res) => {
-  const event = req.body;
+  try {
+    const event = req.body;
 
-  if (event.event === "payment_link.paid") {
-    const payment = event.payload.payment.entity;
-    const link = event.payload.payment_link.entity;
+    if (event.event === "payment_link.paid") {
+      const payment = event.payload.payment.entity;
+      const link = event.payload.payment_link.entity;
 
-    const username = link.notes.username;
-    const amount = payment.amount / 100;
+      const username = link.notes.username;
+      const amount = payment.amount / 100;
 
-    let hours = 0;
-    if (amount == 49) hours = 1;
-    if (amount == 99) hours = 2;
-    if (amount == 249) hours = 6;
-    if (amount == 399) hours = 10;
-    if (amount == 699) hours = 20;
-    if (amount == 1199) hours = 40;
+      let hours = 0;
+      if (amount == 49) hours = 1;
+      if (amount == 99) hours = 2;
+      if (amount == 249) hours = 6;
+      if (amount == 399) hours = 10;
+      if (amount == 699) hours = 20;
+      if (amount == 1199) hours = 40;
 
-    const { data: user } = await supabase
-      .from("users")
-      .select("*")
-      .eq("username", username)
-      .maybeSingle();
-
-    if (user) {
-      await supabase
+      const { data: user } = await supabase
         .from("users")
-        .update({ hours: user.hours + hours })
-        .eq("username", username);
-    }
-  }
+        .select("*")
+        .eq("username", username)
+        .maybeSingle();
 
-  res.sendStatus(200);
+      if (user) {
+        await supabase
+          .from("users")
+          .update({ hours: (user.hours || 0) + hours })
+          .eq("username", username);
+
+        console.log(`Credited ${hours} hrs to ${username}`);
+      }
+    }
+
+    res.sendStatus(200);
+
+  } catch (err) {
+    console.log("Webhook error:", err);
+    res.sendStatus(500);
+  }
 });
 
 // ================= START =================
