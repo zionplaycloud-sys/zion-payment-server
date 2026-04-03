@@ -319,9 +319,9 @@ app.get("/admin-stats", async (req, res) => {
     // 🔥 QUERY
   
     const { data, error } = await supabase
-  .from("payments")
-  .select("*")
-  .ilike("status", "paid");
+  .from("public.payments")
+  .select("*");
+  
 
       // 🔥 ADD THIS LINE HERE
 console.log("📊 DATA FROM DB:", data);
