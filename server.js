@@ -312,22 +312,24 @@ app.get("/admin-stats", async (req, res) => {
     else if (range === "6m") days = 180;
     else if (range === "12m") days = 365;
 
-    const fromDate = new Date();
-    fromDate.setDate(fromDate.getDate() - days);
+    // ✅ UTC SAFE DATE (NO TIMEZONE BUG)
+    const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-    // ✅ SINGLE CLEAN QUERY
-  const { data, error } = await supabase
-  .from("payments")
-  .select("*")
-  .eq("status", "paid")
-  .gte("created_at", fromDate.toISOString().split("T")[0]);
+    // ✅ CLEAN QUERY
+    const { data, error } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("status", "paid")
+      .gte("created_at", fromDate.toISOString());
+
     console.log("📊 DATA FROM DB:", data);
 
     if (error) {
-      console.log("Stats error:", error);
+      console.log("❌ Stats error:", error);
       return res.json({ success: false });
     }
 
+    // ✅ CALCULATIONS
     let totalRevenue = 0;
     let totalOrders = data.length;
     let totalHours = 0;
@@ -339,6 +341,7 @@ app.get("/admin-stats", async (req, res) => {
       totalPoints += p.pts || 0;
     });
 
+    // ✅ FINAL RESPONSE
     res.json({
       success: true,
       totalRevenue,
@@ -348,7 +351,7 @@ app.get("/admin-stats", async (req, res) => {
     });
 
   } catch (err) {
-    console.log("Stats crash:", err);
+    console.log("💥 Stats crash:", err);
     res.json({ success: false });
   }
 });
