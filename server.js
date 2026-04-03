@@ -322,6 +322,10 @@ app.get("/admin-stats", async (req, res) => {
       .select("*")
       .eq("status", "paid");
 
+      // 🔥 ADD THIS LINE HERE
+console.log("📊 DATA FROM DB:", data);
+
+
     if (error) {
       console.log("Stats error:", error);
       return res.json({ success: false });
