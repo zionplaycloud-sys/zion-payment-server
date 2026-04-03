@@ -184,19 +184,59 @@
     </div>
 
     <div id="admin-panel" style="display:none; position:fixed; bottom:20px; left:20px; background:#000; border:2px solid #facc15; padding:15px; border-radius:15px; z-index:9999; width:250px;">
-        <h3 style="color:#facc15;">ADMIN PANEL</h3>
-        <input id="admin-email" placeholder="User Email" style="width:100%;margin-bottom:10px;">
-        <input id="admin-hrs" placeholder="Add Hours" type="number" style="width:100%;margin-bottom:10px;">
-        <input id="admin-pts" placeholder="Add Points" type="number" style="width:100%;margin-bottom:10px;">
-        <button onclick="adminAddTime()" style="width:100%;background:#facc15;color:#000;padding:10px;border:none;border-radius:10px;">
+
+    <h3 style="color:#facc15;">ADMIN PANEL</h3>
+
+    <!-- 📊 ANALYTICS BUTTONS -->
+    <button onclick="loadStats('daily')" style="width:100%;margin-bottom:5px;">Today</button>
+    <button onclick="loadStats('7d')" style="width:100%;margin-bottom:5px;">7 Days</button>
+    <button onclick="loadStats('30d')" style="width:100%;margin-bottom:5px;">30 Days</button>
+    <button onclick="loadStats('3m')" style="width:100%;margin-bottom:5px;">3 Months</button>
+    <button onclick="loadStats('6m')" style="width:100%;margin-bottom:5px;">6 Months</button>
+    <button onclick="loadStats('12m')" style="width:100%;margin-bottom:5px;">12 Months</button>
+
+    <!-- 👤 ADMIN INPUTS -->
+    <input id="admin-email" placeholder="User Email" style="width:100%;margin-top:10px;margin-bottom:10px;">
+    <input id="admin-hrs" placeholder="Add Hours" type="number" style="width:100%;margin-bottom:10px;">
+    <input id="admin-pts" placeholder="Add Points" type="number" style="width:100%;margin-bottom:10px;">
+
+    <!-- ➕ ADD TIME -->
+    <button onclick="adminAddTime()" style="width:100%;background:#facc15;color:#000;padding:10px;border:none;border-radius:10px;">
         ADD TIME
-        </button>
-    </div>
+    </button>
+
+    <!-- 📊 RESULT BOX -->
+    <div id="stats-box" style="margin-top:10px;color:#00d2ff;font-size:12px;"></div>
+
+</div>
 
     <script>
 
         const BACKEND_URL = "https://zion-payment-server-i4ow.onrender.com";
 
+        // ================= ADMIN STATS =================
+async function loadStats(range) {
+    try {
+        const res = await fetch(`${BACKEND_URL}/admin-stats?range=${range}`);
+        const data = await res.json();
+
+        if(data.success){
+            document.getElementById("stats-box").innerHTML = `
+                <div style="background:#111;padding:10px;border-radius:10px;">
+                    <div>💰 Revenue: ₹${data.totalRevenue}</div>
+                    <div>📦 Orders: ${data.totalOrders}</div>
+                    <div>⏱ Hours Sold: ${data.totalHours}</div>
+                    <div>⚡ Points: ${data.totalPoints}</div>
+                </div>
+            `;
+        } else {
+            document.getElementById("stats-box").innerText = "Failed to load stats";
+        }
+
+    } catch(e){
+        document.getElementById("stats-box").innerText = "Server error";
+    }
+}
         // --- 1. NEURAL ENGINE ---
         const canvas = document.getElementById('bg-canvas');
         const ctx = canvas.getContext('2d');
@@ -416,7 +456,7 @@
                 username: currentUserEmail,
                 plan: item.name,
                 amount: parseInt(item.cost),
-                phone: "8138823170"
+                phone: ""
             })
         });
 

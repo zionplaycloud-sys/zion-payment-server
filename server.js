@@ -223,23 +223,42 @@ app.post("/webhook", async (req, res) => {
   try {
     const event = req.body;
 
+    // ✅ Only handle successful payments
     if (event.event === "payment_link.paid") {
+
       const payment = event.payload.payment.entity;
       const link = event.payload.payment_link.entity;
 
       const username = link.notes.username;
       const amount = payment.amount / 100;
+      const payment_id = payment.id;
 
+      console.log(`💰 Payment received: ${username} ₹${amount}`);
+
+      // ================= DUPLICATE CHECK =================
+      const { data: existing } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("payment_id", payment_id)
+        .maybeSingle();
+
+      if (existing) {
+        console.log("⚠️ Duplicate payment ignored:", payment_id);
+        return res.sendStatus(200);
+      }
+
+      // ================= PLAN LOGIC =================
       let hours = 0;
       let pts = 0;
 
       if (amount == 49) { hours = 1; pts = 0; }
-      if (amount == 99) { hours = 2; pts = 10; }
-      if (amount == 249) { hours = 6; pts = 25; }
-      if (amount == 399) { hours = 10; pts = 40; }
-      if (amount == 699) { hours = 20; pts = 70; }
-      if (amount == 1199) { hours = 40; pts = 120; }
+      else if (amount == 99) { hours = 2; pts = 10; }
+      else if (amount == 249) { hours = 6; pts = 25; }
+      else if (amount == 399) { hours = 10; pts = 40; }
+      else if (amount == 699) { hours = 20; pts = 70; }
+      else if (amount == 1199) { hours = 40; pts = 120; }
 
+      // ================= GET USER =================
       const { data: user } = await supabase
         .from("users")
         .select("*")
@@ -247,6 +266,7 @@ app.post("/webhook", async (req, res) => {
         .maybeSingle();
 
       if (user) {
+        // ================= UPDATE USER =================
         await supabase
           .from("users")
           .update({
@@ -254,13 +274,80 @@ app.post("/webhook", async (req, res) => {
             pts: (user.pts || 0) + pts
           })
           .eq("username", username);
+
+        console.log(`✅ Credited ${hours} hrs + ${pts} pts to ${username}`);
+      } else {
+        console.log("❌ User not found:", username);
       }
+
+      // ================= SAVE PAYMENT =================
+      await supabase.from("payments").insert([{
+        username,
+        amount,
+        hours,
+        pts,
+        status: "paid",
+        payment_id
+      }]);
+
+      console.log("📊 Payment saved to database");
     }
 
     res.sendStatus(200);
 
-  } catch {
+  } catch (err) {
+    console.log("💥 Webhook error:", err);
     res.sendStatus(500);
+  }
+});
+// ================= ADMIN STATS =================
+app.get("/admin-stats", async (req, res) => {
+  try {
+    const range = req.query.range;
+
+    let days = 1;
+    if (range === "7d") days = 7;
+    else if (range === "30d") days = 30;
+    else if (range === "3m") days = 90;
+    else if (range === "6m") days = 180;
+    else if (range === "12m") days = 365;
+
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+
+    const { data, error } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("status", "paid")
+      .gte("created_at", fromDate.toISOString());
+
+    if (error) {
+      console.log("Stats error:", error);
+      return res.json({ success: false });
+    }
+
+    let totalRevenue = 0;
+    let totalOrders = data.length;
+    let totalHours = 0;
+    let totalPoints = 0;
+
+    data.forEach(p => {
+      totalRevenue += p.amount || 0;
+      totalHours += p.hours || 0;
+      totalPoints += p.pts || 0;
+    });
+
+    res.json({
+      success: true,
+      totalRevenue,
+      totalOrders,
+      totalHours,
+      totalPoints
+    });
+
+  } catch (err) {
+    console.log("Stats crash:", err);
+    res.json({ success: false });
   }
 });
 
