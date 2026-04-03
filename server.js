@@ -10,17 +10,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ================= DEBUG ENV =================
-console.log("SUPABASE URL:", process.env.SUPABASE_URL ? "OK" : "MISSING");
-console.log("SUPABASE KEY:", process.env.SUPABASE_KEY ? "OK" : "MISSING");
-
-// ================= SUPABASE =================
+// ================= ENV =================
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-// ================= RAZORPAY =================
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY,
   key_secret: process.env.RAZORPAY_SECRET
@@ -28,19 +23,7 @@ const razorpay = new Razorpay({
 
 // ================= ROOT =================
 app.get("/", (req, res) => {
-  res.send("Server is running 🚀");
-});
-
-// ================= TEST DB =================
-app.get("/test-db", async (req, res) => {
-  const { data, error } = await supabase.from("users").select("*").limit(1);
-
-  if (error) {
-    console.log("DB ERROR:", error);
-    return res.send("DB ERROR ❌");
-  }
-
-  res.send("DB Connected ✅");
+  res.send("Server running 🚀");
 });
 
 // ================= SIGNUP =================
@@ -54,9 +37,7 @@ app.post("/signup", async (req, res) => {
       .eq("username", email)
       .maybeSingle();
 
-    if (existing) {
-      return res.json({ success: false, msg: "User exists" });
-    }
+    if (existing) return res.json({ success: false });
 
     const { error } = await supabase.from("users").insert({
       username: email,
@@ -65,15 +46,11 @@ app.post("/signup", async (req, res) => {
       pts: 0
     });
 
-    if (error) {
-      console.log("Signup error:", error);
-      return res.json({ success: false });
-    }
+    if (error) return res.json({ success: false });
 
     res.json({ success: true });
 
-  } catch (err) {
-    console.log("Signup crash:", err);
+  } catch {
     res.json({ success: false });
   }
 });
@@ -83,24 +60,24 @@ app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 🔥 ADMIN LOGIN
-    const { data: adminData } = await supabase
+    // ADMIN
+    const { data: admin } = await supabase
       .from("admin")
       .select("*")
       .eq("username", email)
       .eq("password", password)
       .maybeSingle();
 
-    if (adminData) {
+    if (admin) {
       return res.json({
         success: true,
-        hrs: adminData.hours || 0,
-        pts: adminData.pts || 0,
+        hrs: admin.hours || 0,
+        pts: admin.pts || 0,
         isAdmin: true
       });
     }
 
-    // 👤 USER LOGIN
+    // USER
     const { data } = await supabase
       .from("users")
       .select("*")
@@ -108,9 +85,7 @@ app.post("/login", async (req, res) => {
       .eq("password", password)
       .maybeSingle();
 
-    if (!data) {
-      return res.json({ success: false });
-    }
+    if (!data) return res.json({ success: false });
 
     res.json({
       success: true,
@@ -119,8 +94,7 @@ app.post("/login", async (req, res) => {
       isAdmin: false
     });
 
-  } catch (err) {
-    console.log("Login crash:", err);
+  } catch {
     res.json({ success: false });
   }
 });
@@ -137,10 +111,62 @@ app.post("/update-time", async (req, res) => {
 
     res.json({ success: true });
 
-  } catch (err) {
-    console.log("Update error:", err);
+  } catch {
     res.json({ success: false });
   }
+});
+
+// ================= ADMIN ADD =================
+app.post("/admin-add", async (req, res) => {
+  try {
+    const { email, hrs, pts } = req.body;
+
+    const { data: user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", email)
+      .maybeSingle();
+
+    if (!user) return res.json({ success: false });
+
+    await supabase
+      .from("users")
+      .update({
+        hours: (user.hours || 0) + hrs,
+        pts: (user.pts || 0) + pts
+      })
+      .eq("username", email);
+
+    res.json({ success: true });
+
+  } catch {
+    res.json({ success: false });
+  }
+});
+
+// ================= SYSTEM STATE =================
+let systemState = null;
+
+// GET SYSTEM STATE
+app.get("/get-system-state", (req, res) => {
+  res.json({
+    success: true,
+    state: systemState
+  });
+});
+
+// UPDATE SYSTEM STATE
+app.post("/update-system-state", (req, res) => {
+  systemState = req.body.state;
+  console.log("System updated");
+  res.json({ success: true });
+});
+
+// ================= EXE LAUNCH =================
+app.post("/launch-exe", (req, res) => {
+  const { path } = req.body;
+  console.log("Launch:", path);
+  res.json({ success: true });
 });
 
 // ================= CREATE PAYMENT =================
@@ -163,7 +189,7 @@ app.post("/create-order", async (req, res) => {
     res.json({ link: link.short_url });
 
   } catch (err) {
-    console.log("Payment error:", err);
+    console.log(err);
     res.status(500).send("Payment error");
   }
 });
@@ -174,29 +200,15 @@ app.post("/webhook", async (req, res) => {
     const event = req.body;
 
     if (event.event === "payment_link.paid") {
-
       const payment = event.payload.payment.entity;
       const link = event.payload.payment_link.entity;
 
       const username = link.notes.username;
       const amount = payment.amount / 100;
 
-      // 🛑 DUPLICATE PROTECTION
-      const { data: existingPayment } = await supabase
-        .from("payments")
-        .select("*")
-        .eq("payment_id", payment.id)
-        .maybeSingle();
-
-      if (existingPayment) {
-        console.log("⚠️ Duplicate payment ignored");
-        return res.sendStatus(200);
-      }
-
       let hours = 0;
       let pts = 0;
 
-      // 🎯 PLAN LOGIC
       if (amount == 49) { hours = 1; pts = 0; }
       if (amount == 99) { hours = 2; pts = 10; }
       if (amount == 249) { hours = 6; pts = 25; }
@@ -204,7 +216,6 @@ app.post("/webhook", async (req, res) => {
       if (amount == 699) { hours = 20; pts = 70; }
       if (amount == 1199) { hours = 40; pts = 120; }
 
-      // 🧑 GET USER
       const { data: user } = await supabase
         .from("users")
         .select("*")
@@ -212,8 +223,6 @@ app.post("/webhook", async (req, res) => {
         .maybeSingle();
 
       if (user) {
-
-        // ➕ UPDATE USER
         await supabase
           .from("users")
           .update({
@@ -221,26 +230,12 @@ app.post("/webhook", async (req, res) => {
             pts: (user.pts || 0) + pts
           })
           .eq("username", username);
-
-        // 💾 SAVE PAYMENT
-        await supabase.from("payments").insert({
-          username,
-          amount,
-          hours,
-          pts,
-          status: "paid",
-          payment_id: payment.id,
-          plan: link.notes.plan
-        });
-
-        console.log(`✅ ${username} paid ₹${amount}`);
       }
     }
 
     res.sendStatus(200);
 
-  } catch (err) {
-    console.log("Webhook error:", err);
+  } catch {
     res.sendStatus(500);
   }
 });
