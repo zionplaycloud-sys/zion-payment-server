@@ -303,24 +303,10 @@ app.post("/webhook", async (req, res) => {
 // ================= ADMIN STATS =================
 app.get("/admin-stats", async (req, res) => {
   try {
-    const range = req.query.range;
-
-    let days = 1;
-    if (range === "7d") days = 7;
-    else if (range === "30d") days = 30;
-    else if (range === "3m") days = 90;
-    else if (range === "6m") days = 180;
-    else if (range === "12m") days = 365;
-
-    // ✅ UTC SAFE DATE (NO TIMEZONE BUG)
-    const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    // ✅ CLEAN QUERY
     const { data, error } = await supabase
       .from("payments")
       .select("*")
-      .eq("status", "paid")
-      .gte("created_at", fromDate.toISOString());
+      .eq("status", "paid");
 
     console.log("📊 DATA FROM DB:", data);
 
@@ -329,7 +315,6 @@ app.get("/admin-stats", async (req, res) => {
       return res.json({ success: false });
     }
 
-    // ✅ CALCULATIONS
     let totalRevenue = 0;
     let totalOrders = data.length;
     let totalHours = 0;
@@ -341,7 +326,6 @@ app.get("/admin-stats", async (req, res) => {
       totalPoints += p.pts || 0;
     });
 
-    // ✅ FINAL RESPONSE
     res.json({
       success: true,
       totalRevenue,
