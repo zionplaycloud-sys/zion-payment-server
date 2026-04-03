@@ -348,12 +348,15 @@ async function loadStats(range) {
     }
 
     state.isCmd = false;
-    currentUserEmail = email;
-    state.hrs = data.hrs || 0;
-    state.pts = data.pts || 0;
+currentUserEmail = email;
+state.pts = data.pts || 0;
 
-    enterOS();
-    startTimer();
+// 🔥 LOAD SAVED TIME FROM BACKEND
+await loadSavedTime(data.hrs || 0);
+
+enterOS();
+startTimer();
+
 } else {
     showPopup("INVALID LOGIN ❌");
 }
@@ -597,26 +600,64 @@ async function loadStats(range) {
         }
         function closePopup(){ document.getElementById('custom-popup').style.display = 'none'; }
 
-        function startTimer(){
-            clearInterval(timerInterval);
-            timerInterval = setInterval(()=>{
-                if(state.hrs > 0){
-                    state.hrs = Math.max(0, state.hrs - 0.01);
-                    fetch(`${BACKEND_URL}/update-time`,{
-                        method:'POST',
-                        headers:{'Content-Type':'application/json'},
-                        body: JSON.stringify({ email: currentUserEmail, hrs: state.hrs })
-                    });
-                    if(state.hrs <= 0){
-                        state.hrs = 0;
-                        clearInterval(timerInterval);
-                        showPopup("Contact admin to continue", "TIME OVER ⚠️");
-                        setTimeout(()=>{ logoutUser(); }, 2000);
-                    }
-                    renderUI(); 
-                }
-            },60000);
+        async function loadSavedTime(defaultHrs){
+    try {
+        const res = await fetch(`${BACKEND_URL}/get-system-state`);
+        const data = await res.json();
+
+        if(data.success && data.state[currentUserEmail]){
+            state.hrs = data.state[currentUserEmail].timeLeft;
+        } else {
+            state.hrs = defaultHrs;
         }
+
+    } catch(e){
+        state.hrs = defaultHrs;
+    }
+}
+        function startTimer(){
+    clearInterval(timerInterval);
+
+    timerInterval = setInterval(()=>{
+        if(state.hrs > 0){
+
+            state.hrs = Math.max(0, state.hrs - 0.01);
+
+            // 🔥 UPDATE DB TIME
+            fetch(`${BACKEND_URL}/update-time`,{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    email: currentUserEmail,
+                    hrs: state.hrs
+                })
+            });
+
+            // 🔥 SAVE SYSTEM STATE (ANTI RESET FIX)
+            fetch(`${BACKEND_URL}/update-system-state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    state: {
+                        email: currentUserEmail,
+                        timeLeft: state.hrs
+                    }
+                })
+            });
+
+            // ⏰ TIME OVER
+            if(state.hrs <= 0){
+                state.hrs = 0;
+                clearInterval(timerInterval);
+                showPopup("Contact admin to continue", "TIME OVER ⚠️");
+                setTimeout(()=>{ logoutUser(); }, 2000);
+            }
+
+            renderUI(); 
+        }
+
+    }, 60000);
+}
 
         function logoutUser(){
             clearInterval(timerInterval);

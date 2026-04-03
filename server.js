@@ -87,9 +87,22 @@ app.post("/login", async (req, res) => {
 
     if (!data) return res.json({ success: false });
 
+    // 🔥 GET SESSION TIME
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("*")
+      .eq("username", email)
+      .maybeSingle();
+
+    let currentTime = data.hours || 0;
+
+    if (session) {
+      currentTime = session.time_left;
+    }
+
     res.json({
       success: true,
-      hrs: data.hours || 0,
+      hrs: currentTime,
       pts: data.pts || 0,
       isAdmin: false
     });
@@ -97,7 +110,7 @@ app.post("/login", async (req, res) => {
   } catch {
     res.json({ success: false });
   }
-});
+}); // ✅ FIXED CLOSING
 
 // ================= UPDATE TIME =================
 app.post("/update-time", async (req, res) => {
@@ -145,76 +158,40 @@ app.post("/admin-add", async (req, res) => {
 });
 
 // ================= SYSTEM STATE =================
-let systemState = null;
-
-// GET SYSTEM STATE
-app.get("/get-system-state", (req, res) => {
-  res.json({
-    success: true,
-    state: systemState
-  });
-});
-
-// UPDATE SYSTEM STATE
-app.post("/update-system-state", (req, res) => {
-  systemState = req.body.state;
-  console.log("System updated");
-  res.json({ success: true });
-});
-
-// ================= EXE LAUNCH =================
-app.post("/launch-exe", (req, res) => {
-  const { path } = req.body;
-  console.log("Launch:", path);
-  res.json({ success: true });
-});
-
-// ================= CREATE PAYMENT =================
-app.post("/create-order", async (req, res) => {
+app.get("/get-system-state", async (req, res) => {
   try {
-    const { username, plan, amount, phone } = req.body;
+    const { data } = await supabase.from("sessions").select("*");
 
-    console.log("📥 Incoming Order:", { username, plan, amount, phone });
-
-    const link = await razorpay.paymentLink.create({
-      amount: parseInt(amount) * 100, // ensure number
-      currency: "INR",
-      description: `Plan: ${plan}`,
-
-      customer: {
-        name: username || "User",
-        contact: phone && phone.length >= 10 ? phone : "9876543210" // 🔥 FIXED
-      },
-
-      notify: {
-        sms: true,
-        email: false
-      },
-
-      reminder_enable: true,
-
-      notes: {
-        username: username,
-        plan: plan
-      }
+    let state = {};
+    data.forEach(row => {
+      state[row.username] = {
+        timeLeft: row.time_left
+      };
     });
 
-    console.log("✅ Payment Link Created:", link.short_url);
+    res.json({ success: true, state });
 
-    res.json({
-      success: true,
-      link: link.short_url
-    });
+  } catch {
+    res.json({ success: false });
+  }
+});
 
-  } catch (err) {
-    console.log("💥 FULL PAYMENT ERROR:");
-    console.log(err);
+app.post("/update-system-state", async (req, res) => {
+  try {
+    const { email, timeLeft } = req.body.state;
 
-    // 🔥 Send detailed error back
-    res.status(500).json({
-      success: false,
-      error: err?.error?.description || "Payment creation failed"
-    });
+    await supabase
+      .from("sessions")
+      .upsert({
+        username: email,
+        time_left: timeLeft,
+        updated_at: new Date()
+      });
+
+    res.json({ success: true });
+
+  } catch {
+    res.json({ success: false });
   }
 });
 
@@ -223,7 +200,6 @@ app.post("/webhook", async (req, res) => {
   try {
     const event = req.body;
 
-    // ✅ Only handle successful payments
     if (event.event === "payment_link.paid") {
 
       const payment = event.payload.payment.entity;
@@ -233,32 +209,16 @@ app.post("/webhook", async (req, res) => {
       const amount = payment.amount / 100;
       const payment_id = payment.id;
 
-      console.log(`💰 Payment received: ${username} ₹${amount}`);
-
-      // ================= DUPLICATE CHECK =================
-      const { data: existing } = await supabase
-        .from("payments")
-        .select("*")
-        .eq("payment_id", payment_id)
-        .maybeSingle();
-
-      if (existing) {
-        console.log("⚠️ Duplicate payment ignored:", payment_id);
-        return res.sendStatus(200);
-      }
-
-      // ================= PLAN LOGIC =================
       let hours = 0;
       let pts = 0;
 
-      if (amount == 49) { hours = 1; pts = 0; }
-      else if (amount == 99) { hours = 2; pts = 10; }
-      else if (amount == 249) { hours = 6; pts = 25; }
-      else if (amount == 399) { hours = 10; pts = 40; }
-      else if (amount == 699) { hours = 20; pts = 70; }
-      else if (amount == 1199) { hours = 40; pts = 120; }
+      if (amount == 49) hours = 1;
+      else if (amount == 99) hours = 2;
+      else if (amount == 249) hours = 6;
+      else if (amount == 399) hours = 10;
+      else if (amount == 699) hours = 20;
+      else if (amount == 1199) hours = 40;
 
-      // ================= GET USER =================
       const { data: user } = await supabase
         .from("users")
         .select("*")
@@ -266,77 +226,39 @@ app.post("/webhook", async (req, res) => {
         .maybeSingle();
 
       if (user) {
-        // ================= UPDATE USER =================
         await supabase
           .from("users")
           .update({
-            hours: (user.hours || 0) + hours,
-            pts: (user.pts || 0) + pts
+            hours: (user.hours || 0) + hours
           })
           .eq("username", username);
 
-        console.log(`✅ Credited ${hours} hrs + ${pts} pts to ${username}`);
-      } else {
-        console.log("❌ User not found:", username);
+        const { data: session } = await supabase
+          .from("sessions")
+          .select("*")
+          .eq("username", username)
+          .maybeSingle();
+
+        let newTime = hours;
+
+        if (session) {
+          newTime = (session.time_left || 0) + hours;
+        }
+
+        await supabase
+          .from("sessions")
+          .upsert({
+            username,
+            time_left: newTime,
+            updated_at: new Date()
+          });
       }
-
-      // ================= SAVE PAYMENT =================
-      await supabase.from("payments").insert([{
-        username,
-        amount,
-        hours,
-        pts,
-        status: "paid",
-        payment_id
-      }]);
-
-      console.log("📊 Payment saved to database");
     }
 
     res.sendStatus(200);
 
-  } catch (err) {
-    console.log("💥 Webhook error:", err);
+  } catch {
     res.sendStatus(500);
-  }
-});
-// ================= ADMIN STATS =================
-app.get("/admin-stats", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("payments")
-      .select("*")
-      .eq("status", "paid");
-
-    console.log("📊 DATA FROM DB:", data);
-
-    if (error) {
-      console.log("❌ Stats error:", error);
-      return res.json({ success: false });
-    }
-
-    let totalRevenue = 0;
-    let totalOrders = data.length;
-    let totalHours = 0;
-    let totalPoints = 0;
-
-    data.forEach(p => {
-      totalRevenue += p.amount || 0;
-      totalHours += p.hours || 0;
-      totalPoints += p.pts || 0;
-    });
-
-    res.json({
-      success: true,
-      totalRevenue,
-      totalOrders,
-      totalHours,
-      totalPoints
-    });
-
-  } catch (err) {
-    console.log("💥 Stats crash:", err);
-    res.json({ success: false });
   }
 });
 
