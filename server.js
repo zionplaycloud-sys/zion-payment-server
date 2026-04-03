@@ -180,7 +180,7 @@ app.post("/create-order", async (req, res) => {
       description: `Plan: ${plan}`,
       customer: {
         name: username,
-        contact: phone || "9999999999"
+        contact: phone || "8138823170"
       },
       notify: { sms: true },
       notes: { username, plan }

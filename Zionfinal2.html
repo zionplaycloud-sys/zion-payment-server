@@ -397,42 +397,46 @@
             btn.onclick = async () => {
 
     // 🔥 SHOP → PAYMENT SYSTEM
-    if(list === 'shop') {
+ if(list === 'shop') {
 
-        if(!currentUserEmail){
-            showPopup("LOGIN REQUIRED ❌");
-            return;
-        }
-
-        try {
-            const res = await fetch(`${BACKEND_URL}/create-order`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    username: currentUserEmail,
-                    plan: item.name,
-                    amount: parseInt(item.cost),
-                    phone: "9999999999"
-                })
-            });
-
-            const data = await res.json();
-
-            if(data.link){
-                window.location.href = data.link; // 💸 OPEN PAYMENT
-            } else {
-                showPopup("PAYMENT ERROR ❌");
-            }
-
-        } catch(e){
-            showPopup("SERVER ERROR ❌");
-        }
-
+    if(!currentUserEmail){
+        showPopup("LOGIN REQUIRED ❌");
         return;
     }
 
+    showPopup("Redirecting to payment...", "WAIT ⏳");
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/create-order`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                username: currentUserEmail,
+                plan: item.name,
+                amount: parseInt(item.cost),
+                phone: "8138823170"
+            })
+        });
+
+        const data = await res.json();
+
+        if(data.link){
+            // 🔥 IMPORTANT: delay for smooth UX
+            setTimeout(() => {
+                window.location.href = data.link;
+            }, 800);
+        } else {
+            showPopup("PAYMENT LINK FAILED ❌");
+        }
+
+    } catch(e){
+        showPopup("SERVER ERROR ❌");
+    }
+
+    return;
+}
     // 🎁 REWARD SYSTEM (UNCHANGED)
     if(list === 'reward') {
         if(state.pts >= parseInt(item.cost)) {
