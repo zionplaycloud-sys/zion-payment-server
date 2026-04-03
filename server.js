@@ -31,6 +31,24 @@ app.get("/", (req, res) => {
   res.send("Server is running 🚀");
 });
 
+
+// ================= SYSTEM STATE (FIX 404) =================
+let systemState = {}; // temporary memory storage
+
+// 🔹 GET SYSTEM STATE
+app.get("/get-system-state", (req, res) => {
+  res.json({
+    success: true,
+    state: systemState
+  });
+});
+
+// 🔹 UPDATE SYSTEM STATE
+app.post("/update-system-state", (req, res) => {
+  systemState = req.body.state;
+  res.json({ success: true });
+});
+
 // ================= TEST DB =================
 app.get("/test-db", async (req, res) => {
   const { data, error } = await supabase.from("users").select("*").limit(1);
