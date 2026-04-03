@@ -317,10 +317,11 @@ app.get("/admin-stats", async (req, res) => {
     fromDate.setDate(fromDate.getDate() - days);
 
     // 🔥 QUERY
+  
     const { data, error } = await supabase
-      .from("payments")
-      .select("*")
-    
+  .from("payments")
+  .select("*")
+  .ilike("status", "paid");
 
       // 🔥 ADD THIS LINE HERE
 console.log("📊 DATA FROM DB:", data);
