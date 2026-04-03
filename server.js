@@ -320,7 +320,7 @@ app.get("/admin-stats", async (req, res) => {
     const { data, error } = await supabase
       .from("payments")
       .select("*")
-      .eq("status", "paid");
+    
 
       // 🔥 ADD THIS LINE HERE
 console.log("📊 DATA FROM DB:", data);
