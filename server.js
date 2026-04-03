@@ -326,6 +326,10 @@ app.get("/admin-stats", async (req, res) => {
       // 🔥 ADD THIS LINE HERE
 console.log("📊 DATA FROM DB:", data);
 
+data.forEach(p => {
+  console.log("STATUS VALUE:", p.status);
+});
+
 
     if (error) {
       console.log("Stats error:", error);
