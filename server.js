@@ -305,8 +305,9 @@ app.get("/admin-stats", async (req, res) => {
   try {
     const range = req.query.range;
 
-    let days = 1;
-    if (range === "7d") days = 7;
+    let days = 365;
+    if (range === "daily") days = 1;
+    else if (range === "7d") days = 7;
     else if (range === "30d") days = 30;
     else if (range === "3m") days = 90;
     else if (range === "6m") days = 180;
@@ -315,11 +316,11 @@ app.get("/admin-stats", async (req, res) => {
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - days);
 
+    // 🔥 QUERY
     const { data, error } = await supabase
       .from("payments")
       .select("*")
-      .eq("status", "paid")
-      .gte("created_at", fromDate.toISOString());
+      .eq("status", "paid");
 
     if (error) {
       console.log("Stats error:", error);
