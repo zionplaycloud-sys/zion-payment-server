@@ -48,33 +48,26 @@ app.post("/signup", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log("Signup:", email);
-
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing } = await supabase
       .from("users")
       .select("*")
       .eq("username", email)
       .maybeSingle();
 
-    if (checkError) {
-      console.log("Check error:", checkError);
-      return res.json({ success: false, msg: "DB error" });
-    }
-
     if (existing) {
       return res.json({ success: false, msg: "User exists" });
     }
 
-    const { error: insertError } = await supabase.from("users").insert({
+    const { error } = await supabase.from("users").insert({
       username: email,
       password: password,
       hours: 0,
       pts: 0
     });
 
-    if (insertError) {
-      console.log("Insert error:", insertError);
-      return res.json({ success: false, msg: "Signup failed" });
+    if (error) {
+      console.log("Signup error:", error);
+      return res.json({ success: false });
     }
 
     res.json({ success: true });
@@ -85,22 +78,18 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-// ================= LOGIN (UPDATED WITH ADMIN) =================
+// ================= LOGIN =================
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 🔥 1. CHECK ADMIN TABLE
-    const { data: adminData, error: adminError } = await supabase
+    // 🔥 ADMIN LOGIN
+    const { data: adminData } = await supabase
       .from("admin")
       .select("*")
       .eq("username", email)
       .eq("password", password)
       .maybeSingle();
-
-    if (adminError) {
-      console.log("Admin login error:", adminError);
-    }
 
     if (adminData) {
       return res.json({
@@ -111,21 +100,16 @@ app.post("/login", async (req, res) => {
       });
     }
 
-    // 👤 2. NORMAL USER LOGIN (UNCHANGED)
-    const { data, error } = await supabase
+    // 👤 USER LOGIN
+    const { data } = await supabase
       .from("users")
       .select("*")
       .eq("username", email)
       .eq("password", password)
       .maybeSingle();
 
-    if (error) {
-      console.log("Login error:", error);
-      return res.json({ success: false, msg: "DB error" });
-    }
-
     if (!data) {
-      return res.json({ success: false, msg: "Invalid credentials" });
+      return res.json({ success: false });
     }
 
     res.json({
@@ -146,20 +130,15 @@ app.post("/update-time", async (req, res) => {
   try {
     const { email, hrs } = req.body;
 
-    const { error } = await supabase
+    await supabase
       .from("users")
       .update({ hours: hrs })
       .eq("username", email);
 
-    if (error) {
-      console.log("Update error:", error);
-      return res.json({ success: false });
-    }
-
     res.json({ success: true });
 
   } catch (err) {
-    console.log("Update crash:", err);
+    console.log("Update error:", err);
     res.json({ success: false });
   }
 });
@@ -175,7 +154,7 @@ app.post("/create-order", async (req, res) => {
       description: `Plan: ${plan}`,
       customer: {
         name: username,
-        contact: phone
+        contact: phone || "9999999999"
       },
       notify: { sms: true },
       notes: { username, plan }
@@ -195,20 +174,37 @@ app.post("/webhook", async (req, res) => {
     const event = req.body;
 
     if (event.event === "payment_link.paid") {
+
       const payment = event.payload.payment.entity;
       const link = event.payload.payment_link.entity;
 
       const username = link.notes.username;
       const amount = payment.amount / 100;
 
-      let hours = 0;
-      if (amount == 49) hours = 1;
-      if (amount == 99) hours = 2;
-      if (amount == 249) hours = 6;
-      if (amount == 399) hours = 10;
-      if (amount == 699) hours = 20;
-      if (amount == 1199) hours = 40;
+      // 🛑 DUPLICATE PROTECTION
+      const { data: existingPayment } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("payment_id", payment.id)
+        .maybeSingle();
 
+      if (existingPayment) {
+        console.log("⚠️ Duplicate payment ignored");
+        return res.sendStatus(200);
+      }
+
+      let hours = 0;
+      let pts = 0;
+
+      // 🎯 PLAN LOGIC
+      if (amount == 49) { hours = 1; pts = 0; }
+      if (amount == 99) { hours = 2; pts = 10; }
+      if (amount == 249) { hours = 6; pts = 25; }
+      if (amount == 399) { hours = 10; pts = 40; }
+      if (amount == 699) { hours = 20; pts = 70; }
+      if (amount == 1199) { hours = 40; pts = 120; }
+
+      // 🧑 GET USER
       const { data: user } = await supabase
         .from("users")
         .select("*")
@@ -216,12 +212,28 @@ app.post("/webhook", async (req, res) => {
         .maybeSingle();
 
       if (user) {
+
+        // ➕ UPDATE USER
         await supabase
           .from("users")
-          .update({ hours: (user.hours || 0) + hours })
+          .update({
+            hours: (user.hours || 0) + hours,
+            pts: (user.pts || 0) + pts
+          })
           .eq("username", username);
 
-        console.log(`Credited ${hours} hrs to ${username}`);
+        // 💾 SAVE PAYMENT
+        await supabase.from("payments").insert({
+          username,
+          amount,
+          hours,
+          pts,
+          status: "paid",
+          payment_id: payment.id,
+          plan: link.notes.plan
+        });
+
+        console.log(`✅ ${username} paid ₹${amount}`);
       }
     }
 
