@@ -281,17 +281,21 @@ async function loadStats(range) {
         };
 
         // --- PERSISTENCE: Sync State on Load ---
-        async function syncStateFromServer() {
-            try {
-                const res = await fetch(`${BACKEND_URL}/get-system-state`);
-                const data = await res.json();
-                if(data.success && data.state) {
-                    state = data.state;
-                    console.log("Persistence active: System state loaded from host.");
-                }
-            } catch(e) { console.warn("Host offline: Using local defaults."); }
-            renderUI();
+       async function syncStateFromServer() {
+    try {
+        const res = await fetch(`${BACKEND_URL}/get-system-state`);
+        const data = await res.json();
+
+        if(data.success && data.state && currentUserEmail){
+            if(data.state[currentUserEmail]){
+                state.hrs = data.state[currentUserEmail].timeLeft;
+            }
         }
+
+    } catch(e) {
+        console.warn("State load failed");
+    }
+}
 
         let currentUserEmail = "";
         let timerInterval;
@@ -353,6 +357,8 @@ state.pts = data.pts || 0;
 
 // 🔥 LOAD SAVED TIME FROM BACKEND
 await loadSavedTime(data.hrs || 0);
+await syncStateFromServer(); // ✅ ADD THIS
+
 
 enterOS();
 startTimer();
@@ -377,8 +383,7 @@ startTimer();
 
         function renderUI() {
             const pen = state.isCmd ? 'display:block' : 'display:none';
-            document.getElementById('pts-box').innerText = state.pts.toLocaleString();
-            document.getElementById('hrs-box').innerText = state.hrs.toFixed(2);
+document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString();            document.getElementById('hrs-box').innerText = state.hrs.toFixed(2);
             document.getElementById('pill-nav').innerHTML = state.tabs.map(t => `<div class="nav-link ${state.activeTab === t.toLowerCase() ? 'active' : ''}" onclick="setTab('${t.toLowerCase()}')">${t}</div>`).join('');
             let port = document.getElementById('view-port'), tab = state.activeTab, html = '';
             
@@ -572,10 +577,16 @@ startTimer();
             // --- SAVE UPDATED STATE TO SERVER (FIXES REFRESH ISSUE) ---
             try {
                 await fetch(`${BACKEND_URL}/update-system-state`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ state: state })
-                });
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        state: {
+            [currentUserEmail]: {
+                timeLeft: state.hrs
+            }
+        }
+    })
+});
                 showPopup("Global Update Successful", "SUCCESS ✅");
             } catch(e) { console.log("Backend offline, updating local state only."); }
 
@@ -634,16 +645,17 @@ startTimer();
             });
 
             // 🔥 SAVE SYSTEM STATE (ANTI RESET FIX)
-            fetch(`${BACKEND_URL}/update-system-state`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    state: {
-                        email: currentUserEmail,
-                        timeLeft: state.hrs
-                    }
-                })
-            });
+   fetch(`${BACKEND_URL}/update-system-state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+    state: {
+        [currentUserEmail]: {
+            timeLeft: state.hrs
+                }
+        }
+    })
+});
 
             // ⏰ TIME OVER
             if(state.hrs <= 0){
@@ -711,8 +723,7 @@ startTimer();
             } catch(e){ showPopup("Server Error ❌"); }
         }
 
-        // Init persistence sync
-        syncStateFromServer();
+
     </script>
 
     <div id="custom-popup" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); backdrop-filter:blur(10px); z-index:99999; align-items:center; justify-content:center;">
