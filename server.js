@@ -50,7 +50,6 @@ app.post("/signup", async (req, res) => {
 
     console.log("Signup:", email);
 
-    // check existing
     const { data: existing, error: checkError } = await supabase
       .from("users")
       .select("*")
@@ -66,7 +65,6 @@ app.post("/signup", async (req, res) => {
       return res.json({ success: false, msg: "User exists" });
     }
 
-    // insert
     const { error: insertError } = await supabase.from("users").insert({
       username: email,
       password: password,
@@ -87,11 +85,33 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-// ================= LOGIN =================
+// ================= LOGIN (UPDATED WITH ADMIN) =================
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // 🔥 1. CHECK ADMIN TABLE
+    const { data: adminData, error: adminError } = await supabase
+      .from("admin")
+      .select("*")
+      .eq("username", email)
+      .eq("password", password)
+      .maybeSingle();
+
+    if (adminError) {
+      console.log("Admin login error:", adminError);
+    }
+
+    if (adminData) {
+      return res.json({
+        success: true,
+        hrs: adminData.hours || 0,
+        pts: adminData.pts || 0,
+        isAdmin: true
+      });
+    }
+
+    // 👤 2. NORMAL USER LOGIN (UNCHANGED)
     const { data, error } = await supabase
       .from("users")
       .select("*")
@@ -111,7 +131,8 @@ app.post("/login", async (req, res) => {
     res.json({
       success: true,
       hrs: data.hours || 0,
-      pts: data.pts || 0
+      pts: data.pts || 0,
+      isAdmin: false
     });
 
   } catch (err) {

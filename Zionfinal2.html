@@ -123,7 +123,7 @@
         <div class="auth-card" id="main-auth-card">
             <img src="https://i.ibb.co/fdzh7dGT/image-8779a3.jpg" width="100" style="margin-bottom: 20px; filter: drop-shadow(0 0 10px var(--purple));">
             <h2 id="auth-label" style="margin-bottom: 20px; font-size: 0.7rem; letter-spacing: 2px; color: #666;">ZION_OS_AUTHENTICATION</h2>
-            <input type="text" id="uid" placeholder="EMAIL" oninput="checkAdminHint(this.value)">
+            <input type="text" id="uid" placeholder="EMAIL">
             <input type="password" id="ups" placeholder="PASSWORD">
             <button class="btn-zion" onclick="processAuth('login')">LOGIN</button>
             <button class="btn-zion btn-outline" onclick="goToSignup()">CREATE ACCOUNT</button>
@@ -209,7 +209,7 @@
         const BACKEND_URL = 'https://zion-payment-server-i4ow.onrender.com'; // Host Server IP
 
         let state = {
-            pts: 11000, hrs: 49.13, isCmd: false, activeTab: 'home',
+            pts: 0, hrs: 0, isCmd: false, activeTab: 'home',
             tabs: ['Home', 'Games', 'Arcade', 'Shop', 'Reward'],
             homeData: {
                 heroTitle: "MW III", heroImg: "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1200",
@@ -257,19 +257,6 @@
         function goToSignup() { document.getElementById('landing-page').style.display = 'none'; document.getElementById('signup-page').style.display = 'flex'; }
         function goToLogin() { document.getElementById('signup-page').style.display = 'none'; document.getElementById('landing-page').style.display = 'flex'; }
 
-        function checkAdminHint(val) {
-            const card = document.getElementById('main-auth-card');
-            const label = document.getElementById('auth-label');
-            if(val === "noel.alex12") {
-                card.classList.add('admin-mode');
-                label.innerText = "COMMANDER_GATEWAY_DETECTED";
-                label.style.color = "#facc15";
-            } else {
-                card.classList.remove('admin-mode');
-                label.innerText = "ZION_OS_AUTHENTICATION";
-                label.style.color = "#666";
-            }
-        }
 
         async function processAuth(mode) {
             if(mode === 'signup') {
@@ -293,11 +280,6 @@
             const password = document.getElementById('ups').value;
             if(!email || !password) return showPopup("CREDENTIALS REQUIRED");
 
-            if(email === "noel.alex12" && password === "Noeljoseph@12123"){
-                state.isCmd = true;
-                enterOS();
-                return;
-            }
 
             try {
                 const res = await fetch(`${BACKEND_URL}/login`, {
@@ -306,17 +288,37 @@
                     body: JSON.stringify({ email, password })
                 });
                 const data = await res.json();
-                if(data.success){
-                    if((data.hrs || 0) <= 0){ showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️"); return; }
-                    state.isCmd = false;
-                    currentUserEmail = email;
-                    state.hrs = data.hrs || 0;
-                    state.pts = data.pts || 0;
-                    enterOS();
-                    startTimer();
-                } else { showPopup("INVALID LOGIN ❌"); }
-            } catch(e) { showPopup("BACKEND OFFLINE"); }
-        }
+               
+			   if(data.success){
+
+    // 👑 ADMIN LOGIN
+    if(data.isAdmin){
+        state.isCmd = true;
+        enterOS();
+        return;
+    }
+
+    // 👤 NORMAL USER
+    if((data.hrs || 0) <= 0){
+        showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️");
+        return;
+    }
+
+    state.isCmd = false;
+    currentUserEmail = email;
+    state.hrs = data.hrs || 0;
+    state.pts = data.pts || 0;
+
+    enterOS();
+    startTimer();
+} else {
+    showPopup("INVALID LOGIN ❌");
+}
+
+} catch(e) {
+    showPopup("OFFLINE");
+}
+}
 
         function enterOS() {
             document.getElementById('gaming-bg').style.opacity = "1";
