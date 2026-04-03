@@ -174,23 +174,47 @@ app.post("/create-order", async (req, res) => {
   try {
     const { username, plan, amount, phone } = req.body;
 
+    console.log("📥 Incoming Order:", { username, plan, amount, phone });
+
     const link = await razorpay.paymentLink.create({
-      amount: amount * 100,
+      amount: parseInt(amount) * 100, // ensure number
       currency: "INR",
       description: `Plan: ${plan}`,
+
       customer: {
-        name: username,
-        contact: phone || "8138823170"
+        name: username || "User",
+        contact: phone && phone.length >= 10 ? phone : "9876543210" // 🔥 FIXED
       },
-      notify: { sms: true },
-      notes: { username, plan }
+
+      notify: {
+        sms: true,
+        email: false
+      },
+
+      reminder_enable: true,
+
+      notes: {
+        username: username,
+        plan: plan
+      }
     });
 
-    res.json({ link: link.short_url });
+    console.log("✅ Payment Link Created:", link.short_url);
+
+    res.json({
+      success: true,
+      link: link.short_url
+    });
 
   } catch (err) {
+    console.log("💥 FULL PAYMENT ERROR:");
     console.log(err);
-    res.status(500).send("Payment error");
+
+    // 🔥 Send detailed error back
+    res.status(500).json({
+      success: false,
+      error: err?.error?.description || "Payment creation failed"
+    });
   }
 });
 
