@@ -33,7 +33,17 @@ app.get("/", (req, res) => {
 
 
 // ================= SYSTEM STATE (FIX 404) =================
-let systemState = {}; // temporary memory storage
+let systemState = {
+  pts: 0,
+  hrs: 0,
+  tabs: [],
+  content: {
+    games: [],
+    shop: [],
+    reward: []
+  },
+  homeData: {}
+};
 
 // 🔹 GET SYSTEM STATE
 app.get("/get-system-state", (req, res) => {
