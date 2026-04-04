@@ -353,16 +353,23 @@ if(data.success){
     }
 
     state.isCmd = false;
-    currentUserEmail = email;
-    state.pts = data.pts || 0;
+currentUserEmail = email;
+state.pts = data.pts || 0;
 
-    // 🔥 ONLY THIS (NO loadSavedTime)
-    await syncStateFromServer();
+// 🔥 FIRST LOAD REAL TIME FROM SESSION
+await syncStateFromServer();
 
-    enterOS();
-    startTimer();
+// 🔥 NOW CHECK REAL TIME
+if((state.hrs || 0) <= 0){
+    showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️");
+    return;
+}
 
-} else {
+enterOS();
+startTimer();
+
+}
+ else {
     showPopup("INVALID LOGIN ❌");
 }
 

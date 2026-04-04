@@ -60,7 +60,7 @@ app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // ADMIN
+    // ================= ADMIN LOGIN =================
     const { data: admin } = await supabase
       .from("admin")
       .select("*")
@@ -77,38 +77,53 @@ app.post("/login", async (req, res) => {
       });
     }
 
-    // USER
-    const { data } = await supabase
+    // ================= USER LOGIN =================
+    const { data: user } = await supabase
       .from("users")
       .select("*")
       .eq("username", email)
       .eq("password", password)
       .maybeSingle();
 
-    if (!data) return res.json({ success: false });
+    if (!user) {
+      return res.json({ success: false });
+    }
 
-    // 🔥 GET SESSION TIME
+    // ================= SESSION CHECK =================
     const { data: session } = await supabase
       .from("sessions")
       .select("*")
       .eq("username", email)
       .maybeSingle();
 
-    let currentTime = data.hours || 0;
+    let currentTime = user.hours || 0;
 
-    // ✅ PRIORITY → SESSION TIME
     if (session) {
+      // ✅ EXISTING SESSION → USE IT
       currentTime = session.time_left;
+    } else {
+      // 🔥 FIRST TIME LOGIN → CREATE SESSION
+      await supabase
+        .from("sessions")
+        .insert({
+          username: email,
+          time_left: user.hours || 0,
+          updated_at: new Date()
+        });
+
+      currentTime = user.hours || 0;
     }
 
+    // ================= RESPONSE =================
     res.json({
       success: true,
       hrs: currentTime,
-      pts: data.pts || 0,
+      pts: user.pts || 0,
       isAdmin: false
     });
 
-  } catch {
+  } catch (err) {
+    console.log("LOGIN ERROR:", err);
     res.json({ success: false });
   }
 });

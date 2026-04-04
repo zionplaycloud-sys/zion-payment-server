@@ -3,6 +3,10 @@ cd "ZionPlay Cloud launcher rw"
 npm install bcrypt
 node server.js
 
+git add .
+git commit -m "first commit"
+git push 
+
 http://localhost:3000/
 
 
