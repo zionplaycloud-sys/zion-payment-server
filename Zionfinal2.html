@@ -300,6 +300,7 @@ async function loadStats(range) {
         let currentUserEmail = "";
         let timerInterval;
         let insMode = 'edit', editId = '', editList = '';
+        let currentGameRunning = "Game"; // 🔥 Track which game is running
 
         function goToSignup() { document.getElementById('landing-page').style.display = 'none'; document.getElementById('signup-page').style.display = 'flex'; }
         function goToLogin() { document.getElementById('signup-page').style.display = 'none'; document.getElementById('landing-page').style.display = 'flex'; }
@@ -505,6 +506,7 @@ document.getElementById('hrs-box').innerText = (state.hrs || 0).toFixed(2);
 
     // 🎮 GAME LAUNCH (UNCHANGED)
     else {
+        currentGameRunning = item.name.replace(/\s+/g, ""); // 🔥 Store game name
         if(item.exePath) triggerExeOnHost(item.exePath);
         else showPopup("Launching Cloud Instance...");
     }
@@ -639,11 +641,21 @@ document.getElementById('hrs-box').innerText = (state.hrs || 0).toFixed(2);
                 })
             });
 
-            // ⏰ TIME OVER
+            // ⏰ TIME OVER → KILL PROCESS
             if(state.hrs <= 0){
                 state.hrs = 0;
                 clearInterval(timerInterval);
-                showPopup("Contact admin to continue", "TIME OVER ⚠️");
+                
+                // 🔥 SEND KILL SIGNAL TO BACKEND
+                fetch(`${BACKEND_URL}/kill-process`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        processName: currentGameRunning
+                    })
+                }).catch(e => console.log("Kill command sent"));
+
+                showPopup("Your session time has ended.\nGame process terminated.", "TIME OVER ⚠️");
                 setTimeout(()=>{ logoutUser(); }, 2000);
             }
 
@@ -664,6 +676,7 @@ document.getElementById('hrs-box').innerText = (state.hrs || 0).toFixed(2);
             state.hrs = 0;
             state.pts = 0;
             currentUserEmail = "";
+            currentGameRunning = "Game"; // 🔥 Reset game tracking
         }
 
         document.getElementById('admin-email').addEventListener('input', async (e) => {
@@ -717,7 +730,6 @@ await fetch(`${BACKEND_URL}/update-system-state`, {
             } catch(e){ showPopup("Server Error ❌"); }
         }
 
-
     </script>
 
     <div id="custom-popup" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); backdrop-filter:blur(10px); z-index:99999; align-items:center; justify-content:center;">
@@ -727,6 +739,5 @@ await fetch(`${BACKEND_URL}/update-system-state`, {
             <button onclick="closePopup()" class="btn-zion">OK</button>
         </div>
     </div>
-
 </body>
 </html>

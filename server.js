@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
 import { createClient } from "@supabase/supabase-js";
+import { exec } from "child_process";
 
 dotenv.config();
 
@@ -275,6 +276,32 @@ app.post("/webhook", async (req, res) => {
 
   } catch {
     res.sendStatus(500);
+  }
+});
+
+// ================= KILL PROCESS =================
+app.post("/kill-process", async (req, res) => {
+  try {
+    const { processName } = req.body;
+
+    if (!processName) {
+      return res.json({ success: false, error: "Process name required" });
+    }
+
+    // 🔥 WINDOWS: Kill process by name
+    exec(`taskkill /IM ${processName}.exe /F`, (error, stdout, stderr) => {
+      if (error) {
+        console.log("Process kill message:", stderr);
+        // Process might not be running, but we still consider it success
+        return res.json({ success: true, message: "Kill signal sent" });
+      }
+      console.log("Process killed:", processName);
+      res.json({ success: true, message: `${processName} killed` });
+    });
+
+  } catch (err) {
+    console.log("KILL ERROR:", err);
+    res.json({ success: false, error: err.message });
   }
 });
 
