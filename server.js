@@ -96,6 +96,7 @@ app.post("/login", async (req, res) => {
 
     let currentTime = data.hours || 0;
 
+    // ✅ PRIORITY → SESSION TIME
     if (session) {
       currentTime = session.time_left;
     }
@@ -106,23 +107,6 @@ app.post("/login", async (req, res) => {
       pts: data.pts || 0,
       isAdmin: false
     });
-
-  } catch {
-    res.json({ success: false });
-  }
-}); // ✅ FIXED CLOSING
-
-// ================= UPDATE TIME =================
-app.post("/update-time", async (req, res) => {
-  try {
-    const { email, hrs } = req.body;
-
-    await supabase
-      .from("users")
-      .update({ hours: hrs })
-      .eq("username", email);
-
-    res.json({ success: true });
 
   } catch {
     res.json({ success: false });
@@ -158,11 +142,14 @@ app.post("/admin-add", async (req, res) => {
 });
 
 // ================= SYSTEM STATE =================
+
+// GET SYSTEM STATE
 app.get("/get-system-state", async (req, res) => {
   try {
     const { data } = await supabase.from("sessions").select("*");
 
     let state = {};
+
     data.forEach(row => {
       state[row.username] = {
         timeLeft: row.time_left
@@ -176,9 +163,18 @@ app.get("/get-system-state", async (req, res) => {
   }
 });
 
+// 🔥 FIXED UPDATE SYSTEM STATE
 app.post("/update-system-state", async (req, res) => {
   try {
-    const { email, timeLeft } = req.body.state;
+    const state = req.body.state;
+
+    // 🔥 Extract dynamic key
+    const email = Object.keys(state)[0];
+    const timeLeft = state[email].timeLeft;
+
+    if (!email) {
+      return res.json({ success: false });
+    }
 
     await supabase
       .from("sessions")
@@ -188,9 +184,12 @@ app.post("/update-system-state", async (req, res) => {
         updated_at: new Date()
       });
 
+    console.log("Saved:", email, timeLeft);
+
     res.json({ success: true });
 
-  } catch {
+  } catch (err) {
+    console.log("ERROR:", err);
     res.json({ success: false });
   }
 });
@@ -207,10 +206,8 @@ app.post("/webhook", async (req, res) => {
 
       const username = link.notes.username;
       const amount = payment.amount / 100;
-      const payment_id = payment.id;
 
       let hours = 0;
-      let pts = 0;
 
       if (amount == 49) hours = 1;
       else if (amount == 99) hours = 2;
@@ -226,6 +223,7 @@ app.post("/webhook", async (req, res) => {
         .maybeSingle();
 
       if (user) {
+        // 💰 UPDATE USER BALANCE
         await supabase
           .from("users")
           .update({
@@ -233,6 +231,7 @@ app.post("/webhook", async (req, res) => {
           })
           .eq("username", username);
 
+        // ⏱ UPDATE SESSION (ADD TIME)
         const { data: session } = await supabase
           .from("sessions")
           .select("*")
@@ -252,6 +251,8 @@ app.post("/webhook", async (req, res) => {
             time_left: newTime,
             updated_at: new Date()
           });
+
+        console.log("Recharge added:", username, newTime);
       }
     }
 

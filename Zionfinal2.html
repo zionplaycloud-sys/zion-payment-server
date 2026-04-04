@@ -336,32 +336,31 @@ async function loadStats(range) {
                 });
                 const data = await res.json();
                
-			   if(data.success){
 
-    // 👑 ADMIN LOGIN
+if(data.success){
+
+    // 👑 ADMIN
     if(data.isAdmin){
         state.isCmd = true;
         enterOS();
         return;
     }
 
-    // 👤 NORMAL USER
+    // 👤 USER
     if((data.hrs || 0) <= 0){
         showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️");
         return;
     }
 
     state.isCmd = false;
-currentUserEmail = email;
-state.pts = data.pts || 0;
+    currentUserEmail = email;
+    state.pts = data.pts || 0;
 
-// 🔥 LOAD SAVED TIME FROM BACKEND
-await loadSavedTime(data.hrs || 0);
-await syncStateFromServer(); // ✅ ADD THIS
+    // 🔥 ONLY THIS (NO loadSavedTime)
+    await syncStateFromServer();
 
-
-enterOS();
-startTimer();
+    enterOS();
+    startTimer();
 
 } else {
     showPopup("INVALID LOGIN ❌");
@@ -383,7 +382,8 @@ startTimer();
 
         function renderUI() {
             const pen = state.isCmd ? 'display:block' : 'display:none';
-document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString();            document.getElementById('hrs-box').innerText = state.hrs.toFixed(2);
+document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString();            
+document.getElementById('hrs-box').innerText = (state.hrs || 0).toFixed(2);
             document.getElementById('pill-nav').innerHTML = state.tabs.map(t => `<div class="nav-link ${state.activeTab === t.toLowerCase() ? 'active' : ''}" onclick="setTab('${t.toLowerCase()}')">${t}</div>`).join('');
             let port = document.getElementById('view-port'), tab = state.activeTab, html = '';
             
@@ -611,22 +611,7 @@ document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString()
         }
         function closePopup(){ document.getElementById('custom-popup').style.display = 'none'; }
 
-        async function loadSavedTime(defaultHrs){
-    try {
-        const res = await fetch(`${BACKEND_URL}/get-system-state`);
-        const data = await res.json();
-
-        if(data.success && data.state[currentUserEmail]){
-            state.hrs = data.state[currentUserEmail].timeLeft;
-        } else {
-            state.hrs = defaultHrs;
-        }
-
-    } catch(e){
-        state.hrs = defaultHrs;
-    }
-}
-        function startTimer(){
+   function startTimer(){
     clearInterval(timerInterval);
 
     timerInterval = setInterval(()=>{
@@ -634,28 +619,18 @@ document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString()
 
             state.hrs = Math.max(0, state.hrs - 0.01);
 
-            // 🔥 UPDATE DB TIME
-            fetch(`${BACKEND_URL}/update-time`,{
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
+            // 🔥 ONLY SAVE TO SESSION (NO update-time anymore)
+            fetch(`${BACKEND_URL}/update-system-state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    email: currentUserEmail,
-                    hrs: state.hrs
+                    state: {
+                        [currentUserEmail]: {
+                            timeLeft: state.hrs
+                        }
+                    }
                 })
             });
-
-            // 🔥 SAVE SYSTEM STATE (ANTI RESET FIX)
-   fetch(`${BACKEND_URL}/update-system-state`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-    state: {
-        [currentUserEmail]: {
-            timeLeft: state.hrs
-                }
-        }
-    })
-});
 
             // ⏰ TIME OVER
             if(state.hrs <= 0){
@@ -715,7 +690,19 @@ document.getElementById('pts-box').innerText = (state.pts || 0).toLocaleString()
                 });
                 const data = await res.json();
                 if(data.success){
-                    showPopup(`Added ${addHrs} hrs & ${addPts} pts to ${email}`, "SUCCESS ✅");
+
+// 🔥 ALSO UPDATE SESSION
+await fetch(`${BACKEND_URL}/update-system-state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        state: {
+            [email]: {
+                timeLeft: state.hrs + addHrs
+            }
+        }
+    })
+});                    showPopup(`Added ${addHrs} hrs & ${addPts} pts to ${email}`, "SUCCESS ✅");
                     if(email === currentUserEmail){ state.hrs += addHrs; state.pts += addPts; renderUI(); }
                     document.getElementById('admin-hrs').value = "";
                     document.getElementById('admin-pts').value = "";
