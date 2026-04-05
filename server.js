@@ -209,6 +209,37 @@ app.post("/update-system-state", async (req, res) => {
     res.json({ success: false });
   }
 });
+// ================= CREATE ORDER (🔥 FIXED) =================
+app.post("/create-order", async (req, res) => {
+  try {
+    const { username, plan, amount } = req.body;
+
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: amount * 100,
+      currency: "INR",
+      description: `ZionPlay - ${plan}`,
+      customer: {
+        name: username
+      },
+      notify: {
+        sms: false,
+        email: false
+      },
+      notes: {
+        username: username
+      }
+    });
+
+    res.json({
+      success: true,
+      link: paymentLink.short_url
+    });
+
+  } catch (err) {
+    console.log("CREATE ORDER ERROR:", err);
+    res.status(500).json({ success: false });
+  }
+});
 
 // ================= WEBHOOK =================
 app.post("/webhook", async (req, res) => {
