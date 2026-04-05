@@ -279,6 +279,124 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// ================= CREATE ORDER (RAZORPAY) =================
+app.post("/create-order", async (req, res) => {
+  try {
+    const { username, plan, amount, phone } = req.body;
+
+    const options = {
+      amount: amount * 100, // Convert to paise
+      currency: "INR",
+      receipt: `order_${Date.now()}`,
+      notes: {
+        username: username,
+        plan: plan
+      }
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    // Create payment link for better UX
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: amount * 100,
+      currency: "INR",
+      accept_partial: false,
+      first_min_partial_amount: amount * 100,
+      reference_id: `order_${Date.now()}`,
+      description: `Payment for ${plan}`,
+      customer: {
+        name: username,
+        email: username,
+        contact: phone || "9999999999"
+      },
+      notify: {
+        sms: false,
+        email: false
+      },
+      reminder_enable: false,
+      notes: {
+        username: username,
+        plan: plan,
+        amount: amount
+      },
+      callback_url: process.env.CALLBACK_URL || "https://zionplay.com/payment-success",
+      callback_method: "get"
+    });
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      link: paymentLink.short_url
+    });
+
+  } catch (err) {
+    console.log("CREATE ORDER ERROR:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// ================= ADMIN STATS =================
+app.get("/admin-stats", async (req, res) => {
+  try {
+    const { range } = req.query;
+
+    // Get all users
+    const { data: users } = await supabase.from("users").select("*");
+
+    let totalRevenue = 0;
+    let totalOrders = 0;
+    let totalHours = 0;
+    let totalPoints = 0;
+
+    if (users) {
+      users.forEach(user => {
+        totalHours += user.hours || 0;
+        totalPoints += user.pts || 0;
+        totalOrders += 1;
+        // Rough estimate: ₹100 per hour
+        totalRevenue += (user.hours || 0) * 100;
+      });
+    }
+
+    res.json({
+      success: true,
+      totalRevenue: totalRevenue,
+      totalOrders: totalOrders,
+      totalHours: Math.round(totalHours),
+      totalPoints: totalPoints,
+      range: range
+    });
+
+  } catch (err) {
+    console.log("ADMIN STATS ERROR:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// ================= LAUNCH EXE =================
+app.post("/launch-exe", async (req, res) => {
+  try {
+    const { path } = req.body;
+
+    if (!path) {
+      return res.json({ success: false, error: "Path required" });
+    }
+
+    // Launch executable
+    exec(`"${path}"`, (error, stdout, stderr) => {
+      if (error) {
+        console.log("Launch error:", stderr);
+        return res.json({ success: false, error: stderr });
+      }
+      res.json({ success: true, message: "Game launched" });
+    });
+
+  } catch (err) {
+    console.log("LAUNCH EXE ERROR:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // ================= KILL PROCESS =================
 app.post("/kill-process", async (req, res) => {
   try {
