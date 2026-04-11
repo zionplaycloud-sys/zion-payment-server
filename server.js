@@ -1,4 +1,4 @@
-  import express from "express";
+    import express from "express";
   import cors from "cors";
   import dotenv from "dotenv";
   import Razorpay from "razorpay";
@@ -56,6 +56,27 @@
       res.json({ success: false });
     }
   });
+
+ // ================= GET PCS (NEW - DO NOT REMOVE ANYTHING ABOVE) =================
+
+app.get("/api/pcs", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("pcs")
+      .select("*");
+
+    if (error) {
+      console.log("PCS ERROR:", error);
+      return res.status(500).json({ success: false });
+    }
+
+    res.json(data);
+
+  } catch (err) {
+    console.log("PCS FETCH ERROR:", err);
+    res.status(500).json({ success: false });
+  }
+});
 
   // ================= LOGIN =================
   app.post("/login", async (req, res) => {
