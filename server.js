@@ -1,4 +1,4 @@
-    import express from "express";
+  import express from "express";
   import cors from "cors";
   import dotenv from "dotenv";
   import Razorpay from "razorpay";
@@ -56,27 +56,6 @@
       res.json({ success: false });
     }
   });
-
- // ================= GET PCS (NEW - DO NOT REMOVE ANYTHING ABOVE) =================
-
-app.get("/api/pcs", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("pcs")
-      .select("*");
-
-    if (error) {
-      console.log("PCS ERROR:", error);
-      return res.status(500).json({ success: false });
-    }
-
-    res.json(data);
-
-  } catch (err) {
-    console.log("PCS FETCH ERROR:", err);
-    res.status(500).json({ success: false });
-  }
-});
 
   // ================= LOGIN =================
   app.post("/login", async (req, res) => {
@@ -420,6 +399,44 @@ app.get("/api/pcs", async (req, res) => {
     }
   });
 
+  // ================= LAUNCH VIA AGENT (CORS-SAFE RELAY) =================
+  app.post("/launch-agent", async (req, res) => {
+    try {
+      const { path } = req.body;
+
+      if (!path || typeof path !== "string" || path.length < 3) {
+        return res.json({ success: false, error: "Invalid path" });
+      }
+
+      const agentBase = process.env.AGENT_URL || "https://era-nonsolvable-ciara.ngrok-free.dev";
+
+      const statusRes = await fetch(`${agentBase}/status`);
+      if (!statusRes.ok) {
+        return res.json({ success: false, error: "Agent offline" });
+      }
+
+      const launchRes = await fetch(`${agentBase}/launch-exe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path })
+      });
+
+      const launchData = await launchRes.json().catch(() => null);
+      if (!launchRes.ok || !launchData) {
+        return res.json({ success: false, error: "Agent launch request failed" });
+      }
+
+      if (!launchData.success) {
+        return res.json({ success: false, error: launchData.error || "Launch failed" });
+      }
+
+      return res.json({ success: true });
+    } catch (err) {
+      console.log("LAUNCH AGENT ERROR:", err);
+      return res.json({ success: false, error: "Agent connection failed" });
+    }
+  });
+
   // ================= KILL PROCESS =================
   app.post("/kill-process", async (req, res) => {
     try {
@@ -453,61 +470,72 @@ app.get("/api/pcs", async (req, res) => {
     console.log("Server running on port " + PORT);
   });
   // ================= ASSIGN-PC =================
+app.post("/assign-pc", async (req, res) => {
+  try {
+    const { username, game } = req.body;
 
-  app.post("/assign-pc", async (req, res) => {
-    try {
-      const { username, game } = req.body;
+    // 🔁 Check if user already has PC
+    const { data: existing } = await supabase
+      .from("pcs")
+      .select("*")
+      .eq("current_user", username)
+      .maybeSingle();
 
+    if (existing) {
+      return res.json({
+        success: true,
+        pc: existing.name,
+        // ❌ REMOVE PARSEC USAGE
+        // parsecLink: existing.parsec_link,
 
-// 🔁 Check if user already has a PC
-const { data: existing } = await supabase
-  .from("pcs")
-  .select("*")
-  .eq("current_user", username)
-  .maybeSingle();
-
-if (existing) {
-  return res.json({
-    success: true,
-    pc: existing.name,
-    parsecLink: existing.parsec_link
-  });
-}
-      // 🔍 find free PC
-      const { data: pcs } = await supabase
-        .from("pcs")
-        .select("*")
-        .eq("status", "free")
-        .limit(1);
-
-      if (!pcs || pcs.length === 0) {
-        return res.json({ success: false });
-      }
-
-      const pc = pcs[0];
-
-      // 🔒 mark PC as busy
-      await supabase
-        .from("pcs")
-        .update({
-          status: "busy",
-          current_user: username
-        })
-        .eq("id", pc.id);
-
-      console.log(`Assigned ${pc.name} to ${username}`);
-
-      res.json({
-    success: true,
-    pc: pc.name,
-    parsecLink: pc.parsec_link
-  });
-
-    } catch (err) {
-      console.log("ASSIGN PC ERROR:", err);
-      res.json({ success: false });
+        // ✅ USE WEBRTC SESSION
+        sessionId: uuidv4()
+      });
     }
-  });
+
+    // 🔍 Find free PC
+    const { data: pcs } = await supabase
+      .from("pcs")
+      .select("*")
+      .eq("status", "free")
+      .limit(1);
+
+    if (!pcs || pcs.length === 0) {
+      return res.json({ success: false });
+    }
+
+    const pc = pcs[0];
+
+    // 🔒 Mark busy
+    await supabase
+      .from("pcs")
+      .update({
+        status: "busy",
+        current_user: username
+      })
+      .eq("id", pc.id);
+
+    console.log(`Assigned ${pc.name} to ${username}`);
+
+    // ✅ GENERATE SESSION
+    const sessionId = uuidv4();
+
+    res.json({
+      success: true,
+      pc: pc.name,
+
+      // ❌ REMOVE THIS
+      // parsecLink: pc.parsec_link,
+
+      // ✅ ADD THIS
+      sessionId: sessionId
+    });
+
+  } catch (err) {
+    console.log("ASSIGN PC ERROR:", err);
+    res.json({ success: false });
+  }
+});
 
   // ================= RELEASE PC =================
   app.post("/release-pc", async (req, res) => {
