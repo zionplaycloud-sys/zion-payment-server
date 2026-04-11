@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:black;">
+
+<button id="startBtn">Start Streaming</button>
+
+<script>
+const sessionId = new URLSearchParams(location.search).get("session");
+const ws = new WebSocket("ws://localhost:3000");
+
+const pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
+
+ws.onopen = () => {
+  console.log("Broadcaster WS connected");
+  ws.send(JSON.stringify({ type: "join-broadcaster", sessionId }));
+};
+
+document.getElementById("startBtn").onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true
+    });
+
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    ws.send(JSON.stringify({
+      type: "offer",
+      offer,
+      sessionId,
+      from: "broadcaster"
+    }));
+
+    console.log("Offer sent");
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+pc.onicecandidate = (e) => {
+  if (e.candidate) {
+    ws.send(JSON.stringify({
+      type: "ice-candidate",
+      candidate: e.candidate,
+      sessionId,
+      from: "broadcaster"
+    }));
+  }
+};
+
+ws.onmessage = async (msg) => {
+  const data = JSON.parse(msg.data);
+
+  console.log("Broadcaster got:", data.type);
+
+  if (data.type === "answer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+  }
+
+  if (data.type === "ice-candidate") {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch {}
+  }
+};
+</script>
+</body>
+</html>

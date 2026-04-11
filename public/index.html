@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Viewer</title>
+</head>
+
+<body style="margin:0;background:black;overflow:hidden;">
+
+<video id="video" autoplay playsinline muted style="width:100vw;height:100vh;"></video>
+
+<script>
+const sessionId = new URLSearchParams(location.search).get("session");
+const ws = new WebSocket("ws://localhost:3000");
+
+const video = document.getElementById("video");
+
+const pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
+
+// JOIN
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: "join-viewer", sessionId }));
+};
+
+// VIDEO
+pc.ontrack = (e) => {
+  video.srcObject = e.streams[0];
+  video.onloadedmetadata = () => video.play();
+  console.log("Video attached ✅");
+};
+
+// ICE
+pc.onicecandidate = (e) => {
+  if (e.candidate) {
+    ws.send(JSON.stringify({
+      type: "ice-candidate",
+      candidate: e.candidate,
+      sessionId,
+      from: "viewer"
+    }));
+  }
+};
+
+// SIGNALING
+ws.onmessage = async (msg) => {
+  const data = JSON.parse(msg.data);
+
+  if (data.type === "offer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    ws.send(JSON.stringify({
+      type: "answer",
+      answer,
+      sessionId,
+      from: "viewer"
+    }));
+  }
+
+  if (data.type === "ice-candidate") {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch {}
+  }
+};
+
+// SAFE SEND
+function send(data) {
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+/////////////////////////////////////////////////////
+// 🔥 POINTER LOCK (FIX SAME-PC ISSUE)
+/////////////////////////////////////////////////////
+
+video.addEventListener("click", () => {
+  video.requestPointerLock();
+});
+
+// RELATIVE MOUSE (FPS STYLE)
+document.addEventListener("mousemove", (e) => {
+  if (document.pointerLockElement === video) {
+    send({
+      type: "input",
+      event: "mousemove",
+      x: e.movementX,
+      y: e.movementY,
+      relative: true
+    });
+  }
+});
+
+// CLICK
+document.addEventListener("mousedown", () => {
+  if (document.pointerLockElement === video) {
+    send({ type: "input", event: "mousedown" });
+  }
+});
+
+document.addEventListener("mouseup", () => {
+  if (document.pointerLockElement === video) {
+    send({ type: "input", event: "mouseup" });
+  }
+});
+
+/////////////////////////////////////////////////////
+// 🔥 KEY FIX (NO SPAM)
+/////////////////////////////////////////////////////
+
+const pressedKeys = new Set();
+
+document.addEventListener("keydown", (e) => {
+  if (pressedKeys.has(e.key)) return;
+
+  pressedKeys.add(e.key);
+
+  send({
+    type: "input",
+    event: "keydown",
+    key: e.key
+  });
+});
+
+document.addEventListener("keyup", (e) => {
+  pressedKeys.delete(e.key);
+
+  send({
+    type: "input",
+    event: "keyup",
+    key: e.key
+  });
+});
+
+/////////////////////////////////////////////////////
+// ESC HANDLING (EXIT POINTER LOCK)
+/////////////////////////////////////////////////////
+
+document.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement === video) {
+    console.log("Pointer locked 🔒");
+  } else {
+    console.log("Pointer unlocked 🔓");
+  }
+});
+</script>
+
+</body>
+</html>
