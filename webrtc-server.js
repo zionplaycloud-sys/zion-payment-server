@@ -1,16 +1,26 @@
-const WebSocket = require("ws");
-const express = require("express");
-const http = require("http");
-const path = require("path");
+import WebSocket, { WebSocketServer } from "ws";
+import express from "express";
+import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocketServer({ server });
+
+const PORT = Number(process.env.WEBRTC_PORT || 3000);
 
 app.use(express.static(path.join(__dirname, "public")));
 
-let sessions = {};
-let agents = new Set();
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
+const sessions = {};
+const agents = new Set();
 
 wss.on("connection", (ws) => {
   let sessionId = null;
@@ -19,44 +29,42 @@ wss.on("connection", (ws) => {
   ws.on("message", (msg) => {
     let data;
     try {
-      data = JSON.parse(msg);
+      data = JSON.parse(msg.toString());
     } catch {
       return;
     }
 
-    // VIEWER
     if (data.type === "join-viewer") {
       sessionId = data.sessionId;
       role = "viewer";
       sessions[sessionId] = sessions[sessionId] || {};
       sessions[sessionId].viewer = ws;
-      console.log("Viewer joined:", sessionId);
+      return;
     }
 
-    // BROADCASTER
     if (data.type === "join-broadcaster") {
       sessionId = data.sessionId;
       role = "broadcaster";
       sessions[sessionId] = sessions[sessionId] || {};
       sessions[sessionId].broadcaster = ws;
-      console.log("Broadcaster joined:", sessionId);
+      return;
     }
 
-    // AGENT
     if (data.type === "join-agent") {
       role = "agent";
       ws.isAgent = true;
       agents.add(ws);
-      console.log("Agent connected to server ✅");
+      return;
     }
 
-    // SIGNALING
     if (data.type === "offer") {
       sessions[data.sessionId]?.viewer?.send(JSON.stringify(data));
+      return;
     }
 
     if (data.type === "answer") {
       sessions[data.sessionId]?.broadcaster?.send(JSON.stringify(data));
+      return;
     }
 
     if (data.type === "ice-candidate") {
@@ -68,12 +76,12 @@ wss.on("connection", (ws) => {
       } else {
         s.viewer?.send(JSON.stringify(data));
       }
+      return;
     }
 
-    // 🔥 INPUT → AGENT
     if (data.type === "input") {
-      agents.forEach(agent => {
-        if (agent.readyState === 1) {
+      agents.forEach((agent) => {
+        if (agent.readyState === WebSocket.OPEN) {
           agent.send(JSON.stringify(data));
         }
       });
@@ -81,7 +89,9 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    if (role === "agent") agents.delete(ws);
+    if (role === "agent") {
+      agents.delete(ws);
+    }
 
     if (sessionId && sessions[sessionId]) {
       delete sessions[sessionId][role];
@@ -92,6 +102,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-server.listen(3000, () => {
-  console.log("🚀 Server running on 3000");
+server.listen(PORT, () => {
+  console.log(`WebRTC signaling server running on ${PORT}`);
 });

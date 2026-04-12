@@ -22,6 +22,7 @@
     key_id: process.env.RAZORPAY_KEY,
     key_secret: process.env.RAZORPAY_SECRET
   });
+  const streamBaseUrl = process.env.STREAM_BASE_URL || "";
 
   // ================= ROOT =================
   app.get("/", (req, res) => {
@@ -408,7 +409,12 @@
         return res.json({ success: false, error: "Invalid path" });
       }
 
-      const agentBase = process.env.AGENT_URL || "https://era-nonsolvable-ciara.ngrok-free.dev";
+      const agentBase = process.env.AGENT_URL || "http://127.0.0.1:3001";
+      const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
+      const agentHeaders = { "Content-Type": "application/json" };
+      if (agentToken) {
+        agentHeaders["x-agent-token"] = agentToken;
+      }
 
       const statusRes = await fetch(`${agentBase}/status`);
       if (!statusRes.ok) {
@@ -417,7 +423,7 @@
 
       const launchRes = await fetch(`${agentBase}/launch-exe`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: agentHeaders,
         body: JSON.stringify({ path })
       });
 
@@ -489,7 +495,8 @@ app.post("/assign-pc", async (req, res) => {
         // parsecLink: existing.parsec_link,
 
         // ✅ USE WEBRTC SESSION
-        sessionId: uuidv4()
+        sessionId: uuidv4(),
+        streamBaseUrl
       });
     }
 
@@ -528,7 +535,8 @@ app.post("/assign-pc", async (req, res) => {
       // parsecLink: pc.parsec_link,
 
       // ✅ ADD THIS
-      sessionId: sessionId
+      sessionId: sessionId,
+      streamBaseUrl
     });
 
   } catch (err) {
@@ -635,3 +643,7 @@ app.get("/health", (req, res) => {
 app.head("/health", (req, res) => {
   res.status(200).end();
 });
+
+
+
+

@@ -9,28 +9,32 @@
 <video id="video" autoplay playsinline muted style="width:100vw;height:100vh;"></video>
 
 <script>
-const sessionId = new URLSearchParams(location.search).get("session");
-const ws = new WebSocket("ws://localhost:3000");
+const query = new URLSearchParams(location.search);
+const sessionId = query.get("session");
+const wsOverride = query.get("ws");
+const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+const wsUrl = wsOverride || `${wsProtocol}://${location.host}`;
 
+if (!sessionId) {
+  alert("Missing session id");
+}
+
+const ws = new WebSocket(wsUrl);
 const video = document.getElementById("video");
 
 const pc = new RTCPeerConnection({
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 });
 
-// JOIN
 ws.onopen = () => {
   ws.send(JSON.stringify({ type: "join-viewer", sessionId }));
 };
 
-// VIDEO
 pc.ontrack = (e) => {
   video.srcObject = e.streams[0];
   video.onloadedmetadata = () => video.play();
-  console.log("Video attached ✅");
 };
 
-// ICE
 pc.onicecandidate = (e) => {
   if (e.candidate) {
     ws.send(JSON.stringify({
@@ -42,7 +46,6 @@ pc.onicecandidate = (e) => {
   }
 };
 
-// SIGNALING
 ws.onmessage = async (msg) => {
   const data = JSON.parse(msg.data);
 
@@ -67,22 +70,16 @@ ws.onmessage = async (msg) => {
   }
 };
 
-// SAFE SEND
 function send(data) {
   if (ws.readyState === 1) {
     ws.send(JSON.stringify(data));
   }
 }
 
-/////////////////////////////////////////////////////
-// 🔥 POINTER LOCK (FIX SAME-PC ISSUE)
-/////////////////////////////////////////////////////
-
 video.addEventListener("click", () => {
   video.requestPointerLock();
 });
 
-// RELATIVE MOUSE (FPS STYLE)
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement === video) {
     send({
@@ -95,7 +92,6 @@ document.addEventListener("mousemove", (e) => {
   }
 });
 
-// CLICK
 document.addEventListener("mousedown", () => {
   if (document.pointerLockElement === video) {
     send({ type: "input", event: "mousedown" });
@@ -107,10 +103,6 @@ document.addEventListener("mouseup", () => {
     send({ type: "input", event: "mouseup" });
   }
 });
-
-/////////////////////////////////////////////////////
-// 🔥 KEY FIX (NO SPAM)
-/////////////////////////////////////////////////////
 
 const pressedKeys = new Set();
 
@@ -134,18 +126,6 @@ document.addEventListener("keyup", (e) => {
     event: "keyup",
     key: e.key
   });
-});
-
-/////////////////////////////////////////////////////
-// ESC HANDLING (EXIT POINTER LOCK)
-/////////////////////////////////////////////////////
-
-document.addEventListener("pointerlockchange", () => {
-  if (document.pointerLockElement === video) {
-    console.log("Pointer locked 🔒");
-  } else {
-    console.log("Pointer unlocked 🔓");
-  }
 });
 </script>
 
