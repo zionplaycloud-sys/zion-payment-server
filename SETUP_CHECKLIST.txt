@@ -1,0 +1,66 @@
+ZION PLAY - Setup/Release Checklist
+Last updated: 2026-04-12
+
+DONE
+- Split frontend logic into ui.js (ui.html loads external script)
+- Fixed major UI syntax/parsing issues
+- Backend URL in frontend points to:
+  https://zion-payment-server-o7p6.onrender.com
+- Added backend relay route for agent launch:
+  POST /launch-agent
+- Frontend now uses backend relay for launch (avoids browser CORS to agent)
+- Agent app running locally on port 3001
+- Cloudflare quick tunnel tested for agent exposure
+- Game launch path working (game starts)
+- Viewer/Broadcaster launch flow updated to use same sessionId
+
+PENDING (MUST DO BEFORE INSTALLER)
+1) Stable URLs
+- Current trycloudflare URLs change after restart
+- Need stable tunnel/domain for:
+  - Agent (port 3001)
+  - WebRTC server (port 3000) if remote users will connect
+
+2) Remote testing support
+- Verify external user can open viewer URL and receive stream
+- Verify broadcaster joins same session and sends offer/ICE correctly
+
+3) Auto-start workflow
+- One-click script to start:
+  - Agent
+  - WebRTC server
+  - Tunnel(s)
+- Optional: Windows startup/service setup
+
+4) Config centralization
+- Move hardcoded endpoints into one config file/env
+- Keep separate values for:
+  - local development
+  - production
+
+5) Security hardening
+- Add auth token between backend and agent endpoints
+- Validate/whitelist executable launch paths
+- Add basic rate-limit or abuse protection on launch APIs
+
+6) Installer packaging
+- Choose installer tool (Inno Setup / NSIS / Electron builder)
+- Bundle required runtime/dependencies
+- Create desktop/start-menu shortcuts
+- Include uninstall + logs path
+
+7) QA pass on clean machine
+- Fresh Windows test:
+  login -> assign PC -> launch -> broadcaster -> viewer -> controls
+- Validate error messages for offline agent/server/tunnel
+
+8) Documentation
+- Quick start guide (operator)
+- Troubleshooting guide (common failures and fixes)
+
+IMMEDIATE NEXT ACTIONS
+1. Push latest code (ui.js + server.js) and confirm Render deploy success.
+2. Keep agent + webrtc-server running locally while testing.
+3. Set AGENT_URL in Render to current public agent tunnel URL.
+4. Test full flow with one remote user (brother) and capture console logs.
+5. Decide stable URL approach (domain + named cloudflare tunnel recommended).

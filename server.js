@@ -409,7 +409,7 @@
         return res.json({ success: false, error: "Invalid path" });
       }
 
-      const agentBase = process.env.AGENT_URL || "http://127.0.0.1:3001";
+      const agentBase = process.env.AGENT_URL || "http://127.0.0.1:3002";
       const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
       const agentHeaders = { "Content-Type": "application/json" };
       if (agentToken) {

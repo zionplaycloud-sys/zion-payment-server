@@ -34,7 +34,14 @@ function validateLaunchPath(rawPath) {
     return { ok: false, error: "Invalid path" };
   }
 
-  const exePath = path.resolve(rawPath);
+  const inputPath = rawPath.trim();
+
+  // Allow Steam launch URIs like steam://rungameid/730
+  if (inputPath.toLowerCase().startsWith("steam://")) {
+    return { ok: true, launchType: "steam", launchTarget: inputPath };
+  }
+
+  const exePath = path.resolve(inputPath);
   if (!path.isAbsolute(exePath)) {
     return { ok: false, error: "Path must be absolute" };
   }
@@ -54,12 +61,17 @@ function validateLaunchPath(rawPath) {
     return { ok: false, error: "Path not in allowed launch roots" };
   }
 
-  return { ok: true, exePath };
+  return { ok: true, launchType: "exe", launchTarget: exePath };
 }
 
-function launchExecutable(exePath) {
+function launchExecutable(launchTarget, launchType = "exe") {
   return new Promise((resolve, reject) => {
-    const child = spawn("cmd.exe", ["/c", "start", "", exePath], {
+    const args =
+      launchType === "steam"
+        ? ["/c", "start", "", launchTarget]
+        : ["/c", "start", "", launchTarget];
+
+    const child = spawn("cmd.exe", args, {
       detached: true,
       stdio: "ignore",
       windowsHide: true
@@ -145,7 +157,7 @@ app.post("/launch-exe", ensureToken, async (req, res) => {
       return res.json({ success: false, error: check.error });
     }
 
-    await launchExecutable(check.exePath);
+    await launchExecutable(check.launchTarget, check.launchType);
     return res.json({ success: true });
   } catch (err) {
     return res.json({ success: false, error: err.message || "Launch failed" });
