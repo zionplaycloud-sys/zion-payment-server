@@ -402,45 +402,46 @@
 
   // ================= LAUNCH VIA AGENT (CORS-SAFE RELAY) =================
   app.post("/launch-agent", async (req, res) => {
-    try {
-      const { path } = req.body;
+  try {
+    const { path } = req.body;
 
-      if (!path || typeof path !== "string" || path.length < 3) {
-        return res.json({ success: false, error: "Invalid path" });
-      }
-
-      const agentBase = process.env.AGENT_URL || "http://127.0.0.1:3002";
-      const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
-      const agentHeaders = { "Content-Type": "application/json" };
-      if (agentToken) {
-        agentHeaders["x-agent-token"] = agentToken;
-      }
-
-      const statusRes = await fetch(`${agentBase}/status`);
-      if (!statusRes.ok) {
-        return res.json({ success: false, error: "Agent offline" });
-      }
-
-      const launchRes = await fetch(`${agentBase}/launch`, {
-        method: "POST",
-        headers: agentHeaders,
-       body: JSON.stringify({ gameId: path })      });
-
-      const launchData = await launchRes.json().catch(() => null);
-      if (!launchRes.ok || !launchData) {
-        return res.json({ success: false, error: "Agent launch request failed" });
-      }
-
-      if (!launchData.success) {
-        return res.json({ success: false, error: launchData.error || "Launch failed" });
-      }
-
-      return res.json({ success: true });
-    } catch (err) {
-      console.log("LAUNCH AGENT ERROR:", err);
-      return res.json({ success: false, error: "Agent connection failed" });
+    if (!path || typeof path !== "string" || path.length < 3) {
+      return res.json({ success: false, error: "Invalid path" });
     }
-  });
+
+    const agentBase = process.env.AGENT_URL;
+    const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
+
+    const headers = {
+      "Content-Type": "application/json"
+    };
+
+    if (agentToken) {
+      headers["x-agent-token"] = agentToken;
+    }
+
+    // ✅ Check agent alive
+    const statusRes = await fetch(`${agentBase}/status`);
+    if (!statusRes.ok) {
+      return res.json({ success: false, error: "Agent offline" });
+    }
+
+    // ✅ Correct endpoint + body
+    const launchRes = await fetch(`${agentBase}/launch-exe`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ path })
+    });
+
+    const data = await launchRes.json();
+
+    return res.json(data);
+
+  } catch (err) {
+    console.log("LAUNCH AGENT ERROR:", err);
+    return res.json({ success: false, error: "Agent connection failed" });
+  }
+});
 
   // ================= KILL PROCESS =================
   app.post("/kill-process", async (req, res) => {
