@@ -421,11 +421,10 @@
         return res.json({ success: false, error: "Agent offline" });
       }
 
-      const launchRes = await fetch(`${agentBase}/launch-exe`, {
+      const launchRes = await fetch(`${agentBase}/launch`, {
         method: "POST",
         headers: agentHeaders,
-        body: JSON.stringify({ path })
-      });
+       body: JSON.stringify({ gameId: path })      });
 
       const launchData = await launchRes.json().catch(() => null);
       if (!launchRes.ok || !launchData) {

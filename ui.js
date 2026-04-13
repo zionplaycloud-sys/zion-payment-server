@@ -176,26 +176,14 @@
         }
 
         // 👤 USER
-        if((data.hrs || 0) <= 0){
-            showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️");
-            return;
-        }
-
         state.isCmd = false;
     currentUserEmail = email;
     state.pts = data.pts || 0;
 
-    // 🔥 FIRST LOAD REAL TIME FROM SESSION
+    // 🔥 LOAD REAL TIME FROM SESSION (ALLOW 0 BALANCE LOGIN)
     await syncStateFromServer();
 
-    // 🔥 NOW CHECK REAL TIME
-    if((state.hrs || 0) <= 0){
-        showPopup("You don't have enough balance.\nContact admin.", "ACCESS DENIED ⚠️");
-        return;
-    }
-
     enterOS();
-    startTimer();
 
     }
     else {
@@ -382,6 +370,9 @@
                 showPopup("Launching cloud...");
             }
 
+            // 🔥 SESSION STARTS ONLY AFTER PC ASSIGNMENT + LAUNCH SUCCESS
+            startTimer();
+
             // 🔥 CLOSE UI AFTER SUCCESS
             renderUI();
             closePortal();
@@ -397,8 +388,8 @@ setTimeout(() => {
 
         const session = encodeURIComponent(data.sessionId);
         const streamBase = cleanBaseUrl(data.streamBaseUrl, STREAM_BASE_URL);
-        const broadcasterUrl = `${streamBase}/broadcaster.html?session=${session}`;
-        const viewerUrl = `${streamBase}/index.html?session=${session}`;
+        const broadcasterUrl = `${streamBase}/broadcaster.html?sessionId=${session}`;
+const viewerUrl = `${streamBase}/viewer.html?sessionId=${session}`;
 
         const bWin = window.open(broadcasterUrl, "_blank");
         const vWin = window.open(viewerUrl, "_blank");

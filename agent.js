@@ -82,8 +82,9 @@ function launchExecutable(launchTarget, launchType = "exe") {
     resolve();
   });
 }
-
 async function handleInput(data) {
+  console.log("📥 Agent received:", data);
+
   if (data.type !== "input") return;
 
   if (data.event === "mousemove") {
@@ -123,8 +124,9 @@ function connectToSignaling() {
     console.log("Agent connected to signaling:", SIGNALING_URL);
     ws.send(JSON.stringify({ type: "join-agent" }));
   });
-
   ws.on("message", async (msg) => {
+    console.log("📥 Agent received raw:", msg.toString());
+
     try {
       const data = JSON.parse(msg.toString());
       await handleInput(data);

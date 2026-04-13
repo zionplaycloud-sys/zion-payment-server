@@ -6,7 +6,7 @@
 
 <script>
 const query = new URLSearchParams(location.search);
-const sessionId = query.get("session");
+const sessionId = query.get("sessionId");
 const wsOverride = query.get("ws");
 const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
 const wsUrl = wsOverride || `${wsProtocol}://${location.host}`;

@@ -1,19 +1,15 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <title>Viewer</title>
-</head>
-
 <body style="margin:0;background:black;overflow:hidden;">
 
 <video id="video" autoplay playsinline muted style="width:100vw;height:100vh;"></video>
 
 <script>
 const query = new URLSearchParams(location.search);
-const sessionId = query.get("session");
-const wsOverride = query.get("ws");
+const sessionId = query.get("sessionId");
+
 const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-const wsUrl = wsOverride || `${wsProtocol}://${location.host}`;
+const wsUrl = `${wsProtocol}://${location.host}`;
 
 if (!sessionId) {
   alert("Missing session id");
@@ -70,14 +66,19 @@ ws.onmessage = async (msg) => {
   }
 };
 
+// 🎮 INPUT SYSTEM
 function send(data) {
+  console.log("📤 Sending input:", data);
+
   if (ws.readyState === 1) {
     ws.send(JSON.stringify(data));
   }
 }
 
-video.addEventListener("click", () => {
-  video.requestPointerLock();
+// 🔥 POINTER LOCK FIX
+video.addEventListener("click", async () => {
+  await video.requestPointerLock();
+  console.log("🔒 Pointer locked");
 });
 
 document.addEventListener("mousemove", (e) => {

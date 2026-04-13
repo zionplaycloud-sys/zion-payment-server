@@ -27,7 +27,7 @@ wss.on("connection", (ws) => {
   let role = null;
 
   ws.on("message", (msg) => {
-    let data;
+    let data; 
     try {
       data = JSON.parse(msg.toString());
     } catch {
@@ -79,13 +79,21 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (data.type === "input") {
-      agents.forEach((agent) => {
-        if (agent.readyState === WebSocket.OPEN) {
-          agent.send(JSON.stringify(data));
-        }
-      });
+if (data.type === "input") {
+  console.log("🎮 Input received from viewer:", data);
+
+  if (agents.size === 0) {
+    console.log("❌ No agent connected");
+    return;
+  }
+
+  agents.forEach((agent) => {
+    if (agent.readyState === WebSocket.OPEN) {
+      console.log("➡️ Sending input to agent");
+      agent.send(JSON.stringify(data));
     }
+  });
+}
   });
 
   ws.on("close", () => {
