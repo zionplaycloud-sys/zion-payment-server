@@ -401,16 +401,18 @@
     }
   });
 
-  // ================= LAUNCH VIA AGENT (CORS-SAFE RELAY) =================
-  app.post("/launch-agent", async (req, res) => {
+app.post("/launch-agent", async (req, res) => {
   try {
+    const agentBase = process.env.AGENT_URL; // ✅ THIS WAS MISSING
+
     const { path } = req.body;
 
     if (!path || typeof path !== "string" || path.length < 3) {
       return res.json({ success: false, error: "Invalid path" });
     }
 
-    console.log("AGENT_URL:", agentBase);
+    console.log("🚀 AGENT_URL:", agentBase);
+
     const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
 
     const headers = {
@@ -427,8 +429,8 @@
       return res.json({ success: false, error: "Agent offline" });
     }
 
-    // ✅ Correct endpoint + body
-    const launchRes = await fetch(`${agentBase}/launch-exe`, {
+    // ✅ Launch game
+    const launchRes = await fetch(`${agentBase}/launch-agent`, {
       method: "POST",
       headers,
       body: JSON.stringify({ path })
@@ -439,7 +441,7 @@
     return res.json(data);
 
   } catch (err) {
-    console.log("LAUNCH AGENT ERROR:", err);
+    console.log("❌ LAUNCH AGENT ERROR:", err);
     return res.json({ success: false, error: "Agent connection failed" });
   }
 });
