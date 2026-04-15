@@ -7,7 +7,7 @@
 
     const runtimeConfig = window.__ZION_CONFIG || {};
     const DEFAULT_BACKEND_URL = "https://zion-payment-server-o7p6.onrender.com";
-    const DEFAULT_STREAM_BASE_URL = `${window.location.protocol}//${window.location.hostname}:3000`;
+    const DEFAULT_STREAM_BASE_URL = "http://127.0.0.1:3003";
 
     function cleanBaseUrl(url, fallback) {
         const selected = (url || fallback || "").toString().trim();
@@ -377,34 +377,32 @@
             renderUI();
             closePortal();
 
-  // STEP 2: OPEN BROADCASTER + VIEWER WITH SAME SESSION
+  // ✅ NEW STREAM SYSTEM (NO POPUPS)
 setTimeout(() => {
     try {
-        if (!data.sessionId) {
-            showPopup("Session creation failed ❌", "ERROR");
-            isLaunchingGame = false;
-            return;
-        }
+        const sessionId = data.sessionId;
+window.currentSessionId = sessionId;
 
-        const session = encodeURIComponent(data.sessionId);
-        const streamBase = cleanBaseUrl(data.streamBaseUrl, STREAM_BASE_URL);
-        const broadcasterUrl = `${streamBase}/broadcaster.html?sessionId=${session}`;
-const viewerUrl = `${streamBase}/viewer.html?sessionId=${session}`;
+        showPopup("Connecting to cloud PC...", "SUCCESS ✅");
 
-        const bWin = window.open(broadcasterUrl, "_blank");
-        const vWin = window.open(viewerUrl, "_blank");
+        // 🔥 SHOW STREAM INSIDE APP
+  document.getElementById('view-port').innerHTML = `
+    <video id="video" autoplay playsinline
+        style="width:100%; height:100%; border-radius:20px; background:black;">
+    </video>
+`;
+setTimeout(() => {
+    console.log("🚀 Starting WebRTC with:", window.currentSessionId);
+startWebRTC(window.currentSessionId);
+}, 500);
 
-        if (!bWin || !vWin) {
-            showPopup("Allow pop-ups to open viewer/broadcaster tabs ❌", "NOTICE");
-        } else {
-            showPopup("In broadcaster tab, click Start Streaming ✅", "NOTICE");
-        }
     } catch (err) {
         console.error(err);
-        showPopup("Streaming failed ❌");
+        showPopup("Stream failed ❌");
     }
+
     isLaunchingGame = false;
-}, 1000);
+}, 2000);
 
 } else {
     showPopup("No PC available ❌");
@@ -737,3 +735,74 @@ async function triggerExeOnHost(path) {
     }
 }
     
+function startWebRTC(sessionId) {
+    if (!sessionId) {
+    console.error("❌ No sessionId");
+    return;
+}
+
+    console.log("🎮 Connecting WebRTC:", sessionId);
+
+    const video = document.getElementById("video");
+
+if (!video) {
+    console.error("❌ Video element not found");
+    return;
+}
+
+    const ws = new WebSocket("ws://127.0.0.1:3000");
+    const pc = new RTCPeerConnection();
+
+    const remoteStream = new MediaStream();
+    video.srcObject = remoteStream;
+    video.muted = true;
+video.play().catch(() => {
+    console.log("Autoplay blocked, user interaction needed");
+});
+
+    pc.ontrack = (e) => {
+        console.log("📺 Track received");
+        remoteStream.addTrack(e.track);
+    };
+
+    ws.onopen = () => {
+        console.log("🟢 Viewer connected");
+
+        ws.send(JSON.stringify({
+            type: "join-viewer",
+            sessionId: sessionId
+        }));
+    };
+
+    ws.onmessage = async (msg) => {
+        const data = JSON.parse(msg.data);
+
+        if (data.type === "offer") {
+            await pc.setRemoteDescription(data.offer);
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            ws.send(JSON.stringify({
+                type: "answer",
+                sessionId: sessionId,
+                answer
+            }));
+        }
+
+        if (data.type === "ice-candidate") {
+            await pc.addIceCandidate(data.candidate);
+        }
+    };
+
+    pc.onicecandidate = (e) => {
+        if (e.candidate) {
+            ws.send(JSON.stringify({
+                type: "ice-candidate",
+                sessionId: sessionId,
+                from: "viewer",
+                candidate: e.candidate
+            }));
+        }
+    };
+}

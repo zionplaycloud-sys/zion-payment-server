@@ -5,6 +5,7 @@
   import { createClient } from "@supabase/supabase-js";
   import { exec } from "child_process";
   import { v4 as uuidv4 } from "uuid";
+  import fetch from "node-fetch";
 
   dotenv.config();
 
