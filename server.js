@@ -410,7 +410,7 @@
       return res.json({ success: false, error: "Invalid path" });
     }
 
-    const agentBase = process.env.AGENT_URL;
+    console.log("AGENT_URL:", agentBase);
     const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
 
     const headers = {
