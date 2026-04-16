@@ -9,52 +9,120 @@ const sessions = {};
 wss.on("connection", (ws) => {
   console.log("🔌 Connected");
 
+  let currentSessionId = null;
+  let role = null;
+
   ws.on("message", (msg) => {
     const data = JSON.parse(msg.toString());
 
+    // ===============================
+    // 👀 VIEWER JOIN
+    // ===============================
     if (data.type === "join-viewer") {
-      sessions[data.sessionId] = sessions[data.sessionId] || {};
-      sessions[data.sessionId].viewer = ws;
-      console.log("👀 Viewer joined");
+      currentSessionId = data.sessionId;
+      role = "viewer";
 
-      if (sessions[data.sessionId].broadcaster) {
-        sessions[data.sessionId].broadcaster.send(JSON.stringify({
+      sessions[currentSessionId] = sessions[currentSessionId] || {};
+      sessions[currentSessionId].viewer = ws;
+
+      console.log("👀 Viewer joined:", currentSessionId);
+
+      // 🔥 trigger stream if agent exists
+      if (sessions[currentSessionId].broadcaster) {
+        sessions[currentSessionId].broadcaster.send(JSON.stringify({
           type: "viewer-ready"
         }));
+        console.log("🚀 viewer-ready sent to agent");
       }
+
       return;
     }
 
-    if (data.type === "join-broadcaster") {
-      sessions[data.sessionId] = sessions[data.sessionId] || {};
-      sessions[data.sessionId].broadcaster = ws;
-      console.log("🟢 Agent joined");
+    // ===============================
+    // 🟢 AGENT JOIN
+    // ===============================
+    if (data.type === "join-agent" || data.type === "join-broadcaster") {
+      currentSessionId = data.sessionId;
+      role = "agent";
+
+      sessions[currentSessionId] = sessions[currentSessionId] || {};
+      sessions[currentSessionId].broadcaster = ws;
+
+      console.log("🟢 Agent joined:", currentSessionId);
+
+      // 🔥 trigger if viewer exists
+      if (sessions[currentSessionId].viewer) {
+        ws.send(JSON.stringify({
+          type: "viewer-ready"
+        }));
+        console.log("🚀 viewer-ready sent to agent");
+      }
+
       return;
     }
 
+    // ===============================
+    // 🔁 SIGNALING
+    // ===============================
     if (["offer", "answer", "ice-candidate"].includes(data.type)) {
       const s = sessions[data.sessionId];
       if (!s) return;
 
-      if (data.type === "offer") s.viewer?.send(JSON.stringify(data));
-      if (data.type === "answer") s.broadcaster?.send(JSON.stringify(data));
+      if (data.type === "offer") {
+        console.log("📡 Offer → viewer");
+        s.viewer?.send(JSON.stringify(data));
+      }
+
+      if (data.type === "answer") {
+        console.log("📡 Answer → agent");
+        s.broadcaster?.send(JSON.stringify(data));
+      }
 
       if (data.type === "ice-candidate") {
-        if (data.from === "viewer") s.broadcaster?.send(JSON.stringify(data));
-        else s.viewer?.send(JSON.stringify(data));
+        if (data.from === "viewer") {
+          s.broadcaster?.send(JSON.stringify(data));
+        } else {
+          s.viewer?.send(JSON.stringify(data));
+        }
       }
+
       return;
     }
 
-    // 🔥 INPUT DEBUG
+    // ===============================
+    // 🎮 INPUT
+    // ===============================
     if (data.type === "input") {
-      console.log("🎮 SERVER GOT:", data);
-
       sessions[data.sessionId]?.broadcaster?.send(JSON.stringify(data));
+    }
+  });
+
+  // ===============================
+  // 🔥 CLEANUP ON DISCONNECT (IMPORTANT FIX)
+  // ===============================
+  ws.on("close", () => {
+    console.log("❌ Disconnected");
+
+    if (currentSessionId && sessions[currentSessionId]) {
+      if (role === "viewer") {
+        delete sessions[currentSessionId].viewer;
+      }
+
+      if (role === "agent") {
+        delete sessions[currentSessionId].broadcaster;
+      }
+
+      // 🔥 remove empty session
+      if (
+        !sessions[currentSessionId].viewer &&
+        !sessions[currentSessionId].broadcaster
+      ) {
+        delete sessions[currentSessionId];
+      }
     }
   });
 });
 
 server.listen(3000, () => {
-  console.log("🚀 Server running");
+  console.log("🚀 Server running on ws://localhost:3000");
 });

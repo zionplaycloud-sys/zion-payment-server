@@ -750,15 +750,35 @@ if (!video) {
     return;
 }
 
-    const ws = new WebSocket("ws://127.0.0.1:3000");
-    const pc = new RTCPeerConnection();
+    const WS_URL = (window.__ZION_CONFIG?.WS_URL) || "ws://127.0.0.1:3000";
 
-    const remoteStream = new MediaStream();
-    video.srcObject = remoteStream;
-    video.muted = true;
+const ws = new WebSocket(WS_URL);
+const pc = new RTCPeerConnection();
+
+const remoteStream = new MediaStream();
+video.srcObject = remoteStream;
+
+video.muted = true;
+video.autoplay = true;
+
 video.play().catch(() => {
-    console.log("Autoplay blocked, user interaction needed");
+    console.log("Autoplay fallback");
 });
+
+// 🎯 LOCK MOUSE FOR GAMING
+video.onclick = () => {
+    video.requestPointerLock();
+};
+
+// 🔍 DEBUG
+ws.onerror = (err) => {
+    console.error("❌ WS ERROR:", err);
+};
+
+ws.onclose = () => {
+    console.log("🔌 WS CLOSED");
+};
+
 
     pc.ontrack = (e) => {
         console.log("📺 Track received");
