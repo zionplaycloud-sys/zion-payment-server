@@ -282,10 +282,12 @@
   }
 });
 
-  // ================= CREATE ORDER (RAZORPAY) =================
-  app.post("/create-order", async (req, res) => {
+ app.post("/create-order", async (req, res) => {
   try {
-    const { amount, email } = req.body;
+    const { amount, username } = req.body;
+    const email = username;
+
+    console.log("Creating order for:", email, amount);
 
     const orderId = "order_" + Date.now();
 
@@ -310,6 +312,9 @@
     });
 
     const data = await response.json();
+
+    // ✅ NOW LOG HERE (CORRECT PLACE)
+    console.log("Cashfree FULL response:", data);
 
     res.json({
       success: true,
