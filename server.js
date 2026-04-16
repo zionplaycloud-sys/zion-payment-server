@@ -8,7 +8,7 @@
   import fetch from "node-fetch";
 
   dotenv.config();
-
+ const activeSessions = {};
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -400,18 +400,23 @@
       res.json({ success: false, error: err.message });
     }
   });
+  // ================= launch-agent =================
 
 app.post("/launch-agent", async (req, res) => {
   try {
-    const agentBase = process.env.AGENT_URL; // ✅ THIS WAS MISSING
+    const agentBase = process.env.AGENT_URL;
 
-    const { path } = req.body;
+    const { path, sessionId } = req.body;
 
-    if (!path || typeof path !== "string" || path.length < 3) {
+    if (!path || typeof path !== "string") {
       return res.json({ success: false, error: "Invalid path" });
     }
 
-    console.log("🚀 AGENT_URL:", agentBase);
+    if (!sessionId) {
+      return res.json({ success: false, error: "Missing sessionId" });
+    }
+
+    console.log("🚀 Launching with session:", sessionId);
 
     const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
 
@@ -429,11 +434,14 @@ app.post("/launch-agent", async (req, res) => {
       return res.json({ success: false, error: "Agent offline" });
     }
 
-    // ✅ Launch game
+    // ✅ SEND sessionId to agent
     const launchRes = await fetch(`${agentBase}/launch-agent`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ path })
+      body: JSON.stringify({
+        path,
+        sessionId   // 🔥 THIS IS THE FIX
+      })
     });
 
     const data = await launchRes.json();
@@ -490,15 +498,21 @@ app.post("/assign-pc", async (req, res) => {
       .eq("current_user", username)
       .maybeSingle();
 
+    // 🔥 ALWAYS CREATE NEW SESSION
+    const sessionId = uuidv4();
+
     if (existing) {
+      activeSessions[sessionId] = {
+        username,
+        pc: existing.name
+      };
+
+      console.log("🎮 Session created (existing):", sessionId);
+
       return res.json({
         success: true,
         pc: existing.name,
-        // ❌ REMOVE PARSEC USAGE
-        // parsecLink: existing.parsec_link,
-
-        // ✅ USE WEBRTC SESSION
-        sessionId: uuidv4(),
+        sessionId,
         streamBaseUrl
       });
     }
@@ -527,18 +541,18 @@ app.post("/assign-pc", async (req, res) => {
 
     console.log(`Assigned ${pc.name} to ${username}`);
 
-    // ✅ GENERATE SESSION
-    const sessionId = uuidv4();
+    // 🔥 STORE SESSION
+    activeSessions[sessionId] = {
+      username,
+      pc: pc.name
+    };
+
+    console.log("🎮 Session created:", sessionId);
 
     res.json({
       success: true,
       pc: pc.name,
-
-      // ❌ REMOVE THIS
-      // parsecLink: pc.parsec_link,
-
-      // ✅ ADD THIS
-      sessionId: sessionId,
+      sessionId,
       streamBaseUrl
     });
 
