@@ -549,12 +549,35 @@ app.post("/assign-pc", async (req, res) => {
 
     console.log("🎮 Session created:", sessionId);
 
-    res.json({
-      success: true,
-      pc: pc.name,
-      sessionId,
-      streamBaseUrl
+// 🔥 SEND SESSION TO AGENT (FIX)
+try {
+  const agentBase = process.env.AGENT_URL;
+
+  if (agentBase) {
+    await fetch(`${agentBase}/launch-agent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        path: "",          // keep empty if already launched separately
+        sessionId: sessionId
+      })
     });
+
+    console.log("✅ Session sent to agent:", sessionId);
+  }
+} catch (err) {
+  console.log("❌ Agent session send failed:", err);
+}
+
+// ✅ RESPONSE (UNCHANGED)
+res.json({
+  success: true,
+  pc: pc.name,
+  sessionId,
+  streamBaseUrl
+});
 
   } catch (err) {
     console.log("ASSIGN PC ERROR:", err);
