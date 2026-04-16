@@ -1,7 +1,6 @@
   import express from "express";
   import cors from "cors";
   import dotenv from "dotenv";
-  import Razorpay from "razorpay";
   import { createClient } from "@supabase/supabase-js";
   import { exec } from "child_process";
   import { v4 as uuidv4 } from "uuid";
@@ -19,10 +18,7 @@
     process.env.SUPABASE_KEY
   );
 
-  const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY,
-    key_secret: process.env.RAZORPAY_SECRET
-  });
+ 
   const streamBaseUrl = process.env.STREAM_BASE_URL || "";
 
   // ================= ROOT =================
@@ -215,128 +211,116 @@
 
   // ================= WEBHOOK =================
   app.post("/webhook", async (req, res) => {
-    try {
-      const event = req.body;
+  try {
+    const data = req.body;
 
-      if (event.event === "payment_link.paid") {
+    console.log("🔥 Cashfree webhook:", JSON.stringify(data, null, 2));
 
-        const payment = event.payload.payment.entity;
-        const link = event.payload.payment_link.entity;
+    if (
+      data.type === "PAYMENT_SUCCESS_WEBHOOK" ||
+      data.data?.payment?.payment_status === "SUCCESS"
+    ) {
+      const email =
+        data.data?.customer_details?.customer_email ||
+        data.data?.order?.customer_details?.customer_email;
 
-        const username = link.notes.username;
-        const amount = payment.amount / 100;
+      const amount = data.data?.order?.order_amount;
 
-        let hours = 0;
+      let hours = 0;
 
-        if (amount == 49) hours = 1;
-        else if (amount == 99) hours = 2;
-        else if (amount == 249) hours = 6;
-        else if (amount == 399) hours = 10;
-        else if (amount == 699) hours = 20;
-        else if (amount == 1199) hours = 40;
+      if (amount == 49) hours = 1;
+      else if (amount == 99) hours = 2;
+      else if (amount == 249) hours = 6;
+      else if (amount == 399) hours = 10;
+      else if (amount == 699) hours = 20;
 
-        const { data: user } = await supabase
+      const { data: user } = await supabase
+        .from("users")
+        .select("*")
+        .eq("username", email)
+        .maybeSingle();
+
+      if (user) {
+        await supabase
           .from("users")
+          .update({
+            hours: (user.hours || 0) + hours
+          })
+          .eq("username", email);
+
+        const { data: session } = await supabase
+          .from("sessions")
           .select("*")
-          .eq("username", username)
+          .eq("username", email)
           .maybeSingle();
 
-        if (user) {
-          // 💰 UPDATE USER BALANCE
-          await supabase
-            .from("users")
-            .update({
-              hours: (user.hours || 0) + hours
-            })
-            .eq("username", username);
+        let newTime = hours;
 
-          // ⏱ UPDATE SESSION (ADD TIME)
-          const { data: session } = await supabase
-            .from("sessions")
-            .select("*")
-            .eq("username", username)
-            .maybeSingle();
-
-          let newTime = hours;
-
-          if (session) {
-            newTime = (session.time_left || 0) + hours;
-          }
-
-          await supabase
-            .from("sessions")
-            .upsert({
-              username,
-              time_left: newTime,
-              updated_at: new Date()
-            });
-
-          console.log("Recharge added:", username, newTime);
+        if (session) {
+          newTime = (session.time_left || 0) + hours;
         }
+
+        await supabase
+          .from("sessions")
+          .upsert({
+            username: email,
+            time_left: newTime,
+            updated_at: new Date()
+          });
+
+        console.log("🔥 Hours added:", email, hours);
+      } else {
+        console.log("⚠️ User not found:", email);
       }
-
-      res.sendStatus(200);
-
-    } catch {
-      res.sendStatus(500);
     }
-  });
+
+    res.sendStatus(200);
+
+  } catch (err) {
+    console.log("❌ Webhook error:", err);
+    res.sendStatus(500);
+  }
+});
 
   // ================= CREATE ORDER (RAZORPAY) =================
   app.post("/create-order", async (req, res) => {
-    try {
-      const { username, plan, amount, phone } = req.body;
+  try {
+    const { amount, email } = req.body;
 
-      const options = {
-        amount: amount * 100, // Convert to paise
-        currency: "INR",
-        receipt: `order_${Date.now()}`,
-        notes: {
-          username: username,
-          plan: plan
+    const orderId = "order_" + Date.now();
+
+    const response = await fetch("https://sandbox.cashfree.com/pg/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-version": "2022-09-01",
+        "x-client-id": process.env.CASHFREE_APP_ID,
+        "x-client-secret": process.env.CASHFREE_SECRET_KEY
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        order_amount: amount,
+        order_currency: "INR",
+        customer_details: {
+          customer_id: email,
+          customer_email: email,
+          customer_phone: "9999999999"
         }
-      };
+      })
+    });
 
-      const order = await razorpay.orders.create(options);
+    const data = await response.json();
 
-      // Create payment link for better UX
-      const paymentLink = await razorpay.paymentLink.create({
-        amount: amount * 100,
-        currency: "INR",
-        accept_partial: false,
-        first_min_partial_amount: amount * 100,
-        reference_id: `order_${Date.now()}`,
-        description: `Payment for ${plan}`,
-        customer: {
-          name: username,
-          email: username,
-          contact: phone || "8138823170"
-        },
-        notify: {
-          sms: false,
-          email: false
-        },
-        reminder_enable: false,
-        notes: {
-          username: username,
-          plan: plan,
-          amount: amount
-        },
-        callback_url: process.env.CALLBACK_URL || "https://zionplay.com/payment-success",
-        callback_method: "get"
-      });
+    res.json({
+      success: true,
+      payment_session_id: data.payment_session_id
+    });
 
-      res.json({
-        success: true,
-        orderId: order.id,
-        link: paymentLink.short_url
-      });
-
-    } catch (err) {
-      console.log("CREATE ORDER ERROR:", err);
-      res.json({ success: false, error: err.message });
-    }
-  });
+  } catch (err) {
+    console.log("CREATE ORDER ERROR:", err);
+    res.json({ success: false });
+  }
+});
 
   // ================= ADMIN STATS =================
   app.get("/admin-stats", async (req, res) => {

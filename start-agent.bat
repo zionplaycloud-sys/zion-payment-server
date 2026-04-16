@@ -1,13 +1,36 @@
 @echo off
-title Zion Stream System
+title ZION PLAY - AUTO START
 
-echo Starting WebRTC Server...
-start "WebRTC" cmd /k "cd /d E:\zion-stream && node webrtc-server.js"
+echo 🚀 Starting Zion Play System...
 
-timeout /t 2 > nul
+:: ================================
+:: 1. WEBRTC SERVER
+:: ================================
+start "WebRTC Server" cmd /k "cd /d E:\zion-stream && node webrtc-server.js"
+timeout /t 2 >nul
 
-echo Starting Stream Agent...
-start "Agent" cmd /k "cd /d E:\zion-stream && node agent.js"
+:: ================================
+:: 2. AGENT SERVER
+:: ================================
+start "Agent Server" cmd /k "cd /d E:\zion-agent && node agent.js"
+timeout /t 3 >nul
 
-echo Stream system started!
+:: ================================
+:: 3. CLOUDFLARE TUNNEL (AFTER AGENT)
+:: ================================
+start "Cloudflare Tunnel" cmd /k "cloudflared-windows-amd64.exe tunnel --url http://localhost:3002"
+timeout /t 3 >nul
+
+:: ================================
+:: 4. ELECTRON AGENT UI
+:: ================================
+start "Agent UI" cmd /k "cd /d E:\zion-agent-ui && npm start"
+timeout /t 2 >nul
+
+:: ================================
+:: 5. CLIENT UI
+:: ================================
+start "Client UI" cmd /k "cd /d E:\zion-client && npm start"
+
+echo ✅ All systems started!
 pause
