@@ -41,7 +41,11 @@ wss.on("connection", (ws) => {
     // ===============================
     // 🟢 AGENT JOIN
     // ===============================
-    if (data.type === "join-agent" || data.type === "join-broadcaster") {
+    if (
+  data.type === "join-agent" ||
+  data.type === "join-broadcaster" ||
+  data.type === "agent-join" // 🔥 ADD THIS
+) {
       currentSessionId = data.sessionId;
       role = "agent";
 
