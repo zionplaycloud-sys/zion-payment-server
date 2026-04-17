@@ -210,69 +210,112 @@
   });
 
   // ================= WEBHOOK =================
-  app.post("/webhook", async (req, res) => {
+app.post("/webhook", async (req, res) => {
   try {
     const data = req.body;
 
-    console.log("🔥 Cashfree webhook:", JSON.stringify(data, null, 2));
+    console.log("🔥 Cashfree webhook received:");
+    console.log(JSON.stringify(data, null, 2));
 
-    if (
+    // ✅ Check payment success
+    const isSuccess =
       data.type === "PAYMENT_SUCCESS_WEBHOOK" ||
-      data.data?.payment?.payment_status === "SUCCESS"
-    ) {
-      const email =
-        data.data?.customer_details?.customer_email ||
-        data.data?.order?.customer_details?.customer_email;
+      data.data?.payment?.payment_status === "SUCCESS";
 
-      const amount = data.data?.order?.order_amount;
-
-      let hours = 0;
-
-      if (amount == 49) hours = 1;
-      else if (amount == 99) hours = 2;
-      else if (amount == 249) hours = 6;
-      else if (amount == 399) hours = 10;
-      else if (amount == 699) hours = 20;
-
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("username", email)
-        .maybeSingle();
-
-      if (user) {
-        await supabase
-          .from("users")
-          .update({
-            hours: (user.hours || 0) + hours
-          })
-          .eq("username", email);
-
-        const { data: session } = await supabase
-          .from("sessions")
-          .select("*")
-          .eq("username", email)
-          .maybeSingle();
-
-        let newTime = hours;
-
-        if (session) {
-          newTime = (session.time_left || 0) + hours;
-        }
-
-        await supabase
-          .from("sessions")
-          .upsert({
-            username: email,
-            time_left: newTime,
-            updated_at: new Date()
-          });
-
-        console.log("🔥 Hours added:", email, hours);
-      } else {
-        console.log("⚠️ User not found:", email);
-      }
+    if (!isSuccess) {
+      console.log("⚠️ Not a success event");
+      return res.sendStatus(200);
     }
+
+    // ✅ Extract email safely
+    const email =
+      data.data?.customer_details?.customer_email ||
+      data.data?.order?.customer_details?.customer_email;
+
+    // ✅ Extract & FIX amount type
+    const amount = Number(data.data?.order?.order_amount);
+
+    console.log("📦 Webhook email:", email);
+    console.log("💰 Webhook amount:", amount, typeof amount);
+
+    if (!email || !amount) {
+      console.log("❌ Missing email or amount");
+      return res.sendStatus(400);
+    }
+
+    // ✅ Convert amount → hours
+    let hours = 0;
+
+    if (amount === 49) hours = 1;
+    else if (amount === 99) hours = 2;
+    else if (amount === 249) hours = 6;
+    else if (amount === 399) hours = 10;
+    else if (amount === 699) hours = 20;
+
+    console.log("⏱️ Hours to add:", hours);
+
+    if (hours === 0) {
+      console.log("⚠️ Amount not mapped to any plan");
+      return res.sendStatus(200);
+    }
+
+    // ✅ GET USER (IMPORTANT: adjust column if needed)
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", email) // ⚠️ change to "email" if your DB uses email column
+      .maybeSingle();
+
+    if (userError) {
+      console.log("❌ User fetch error:", userError);
+      return res.sendStatus(500);
+    }
+
+    if (!user) {
+      console.log("⚠️ User not found:", email);
+      return res.sendStatus(200);
+    }
+
+    // ✅ UPDATE HOURS
+    const newHours = (user.hours || 0) + hours;
+
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ hours: newHours })
+      .eq("username", email); // ⚠️ same here
+
+    if (updateError) {
+      console.log("❌ Update error:", updateError);
+      return res.sendStatus(500);
+    }
+
+    // ✅ HANDLE SESSION
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("*")
+      .eq("username", email)
+      .maybeSingle();
+
+    let newTime = hours;
+
+    if (session) {
+      newTime = (session.time_left || 0) + hours;
+    }
+
+    const { error: sessionError } = await supabase
+      .from("sessions")
+      .upsert({
+        username: email,
+        time_left: newTime,
+        updated_at: new Date()
+      });
+
+    if (sessionError) {
+      console.log("❌ Session update error:", sessionError);
+      return res.sendStatus(500);
+    }
+
+    console.log("🔥 SUCCESS: Hours added →", email, hours);
 
     res.sendStatus(200);
 
