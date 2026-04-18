@@ -23,6 +23,66 @@
  
   const streamBaseUrl = process.env.STREAM_BASE_URL || "";
 
+  function sanitizeEmail(input) {
+    const email = (input || "").toString().trim().toLowerCase();
+    if (!email) return "";
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    return ok ? email : "";
+  }
+
+  function sanitizePhone(input) {
+    const digits = (input || "").toString().replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) return "";
+    return digits;
+  }
+
+  function readPaymentContactFromUser(user) {
+    if (!user) {
+      return { email: "", phone: "" };
+    }
+
+    const email = sanitizeEmail(
+      user.customer_email || user.payment_email || user.username || ""
+    );
+    const phone = sanitizePhone(
+      user.customer_phone || user.payment_phone || user.phone || user.mobile || user.mobile_no || ""
+    );
+
+    return { email, phone };
+  }
+
+  async function savePaymentContactForUser(username, paymentEmail, paymentPhone) {
+    const email = sanitizeEmail(paymentEmail);
+    const phone = sanitizePhone(paymentPhone);
+
+    if (!username || !email || !phone) {
+      return { success: false, error: "Invalid payment contact data" };
+    }
+
+    const payloadOptions = [
+      { customer_email: email, customer_phone: phone },
+      { payment_email: email, payment_phone: phone },
+      { customer_email: email, phone: phone },
+      { payment_email: email, phone: phone }
+    ];
+
+    for (const payload of payloadOptions) {
+      const { error } = await supabase
+        .from("users")
+        .update(payload)
+        .eq("username", username);
+
+      if (!error) {
+        return { success: true, email, phone };
+      }
+    }
+
+    return {
+      success: false,
+      error: "Could not save contact in users table. Add customer_email/customer_phone columns."
+    };
+  }
+
   // ================= ROOT =================
   app.get("/", (req, res) => {
     res.send("Server running 🚀");
@@ -133,13 +193,39 @@ return res.json({
   success: true,
   hrs: currentTime,
   pts: user.pts || 0,
-  isAdmin: false
+  isAdmin: false,
+  paymentEmail: readPaymentContactFromUser(user).email,
+  paymentPhone: readPaymentContactFromUser(user).phone
 });
 } catch (err) {
   console.log("LOGIN ERROR:", err);
   res.json({ success: false });
 }
 });
+
+  app.post("/save-payment-contact", async (req, res) => {
+    try {
+      const { username, paymentEmail, paymentPhone } = req.body || {};
+
+      if (!username) {
+        return res.json({ success: false, error: "Username required" });
+      }
+
+      const saved = await savePaymentContactForUser(username, paymentEmail, paymentPhone);
+      if (!saved.success) {
+        return res.json(saved);
+      }
+
+      return res.json({
+        success: true,
+        paymentEmail: saved.email,
+        paymentPhone: saved.phone
+      });
+    } catch (err) {
+      console.log("SAVE PAYMENT CONTACT ERROR:", err);
+      return res.json({ success: false, error: "Failed to save payment contact" });
+    }
+  });
 
 // ================= ADMIN ADD =================
   app.post("/admin-add", async (req, res) => {
@@ -340,10 +426,43 @@ app.post("/webhook", async (req, res) => {
 
  app.post("/create-order", async (req, res) => {
   try {
-    const { amount, username } = req.body;
-    const email = username;
+    const { amount, username, paymentEmail, paymentPhone } = req.body;
+    const loginEmail = sanitizeEmail(username);
 
-    console.log("Creating order for:", email, amount);
+    if (!loginEmail || !amount) {
+      return res.json({ success: false, error: "Invalid order payload" });
+    }
+
+    const { data: user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .maybeSingle();
+
+    const storedContact = readPaymentContactFromUser(user);
+    const requestedEmail = sanitizeEmail(paymentEmail);
+    const requestedPhone = sanitizePhone(paymentPhone);
+
+    // Save first-purchase contact when provided by client.
+    if (requestedEmail && requestedPhone) {
+      const saved = await savePaymentContactForUser(username, requestedEmail, requestedPhone);
+      if (!saved.success) {
+        return res.json(saved);
+      }
+    }
+
+    const customerEmail = requestedEmail || storedContact.email || loginEmail;
+    const customerPhone = requestedPhone || storedContact.phone;
+
+    if (!customerPhone) {
+      return res.json({
+        success: false,
+        contactRequired: true,
+        error: "CONTACT_REQUIRED"
+      });
+    }
+
+    console.log("Creating order for:", customerEmail, amount);
 
     const orderId = "order_" + Date.now();
 
@@ -360,14 +479,22 @@ app.post("/webhook", async (req, res) => {
         order_amount: amount,
         order_currency: "INR",
         customer_details: {
-          customer_id: email,
-          customer_email: email,
-          customer_phone: "9999999999"
+          customer_id: username,
+          customer_email: customerEmail,
+          customer_phone: customerPhone
         }
       })
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+      console.log("Cashfree error response:", data);
+      return res.json({
+        success: false,
+        error: data?.message || data?.error?.message || "Cashfree order failed"
+      });
+    }
 
     // ✅ NOW LOG HERE (CORRECT PLACE)
     console.log("Cashfree FULL response:", data);
