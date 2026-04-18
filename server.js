@@ -5,6 +5,8 @@
   import { exec } from "child_process";
   import { v4 as uuidv4 } from "uuid";
   import fetch from "node-fetch";
+  import bcrypt from "bcrypt";
+
 
   dotenv.config();
  const activeSessions = {};
@@ -28,107 +30,118 @@
 
   // ================= SIGNUP =================
   app.post("/signup", async (req, res) => {
-    try {
-      const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-      const { data: existing } = await supabase
-        .from("users")
-        .select("*")
-        .eq("username", email)
-        .maybeSingle();
+    const { data: existing } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", email)
+      .maybeSingle();
 
-      if (existing) return res.json({ success: false });
+    if (existing) return res.json({ success: false });
 
-      const { error } = await supabase.from("users").insert({
-        username: email,
-        password: password,
-        hours: 0,
-        pts: 0
-      });
+    // 🔥 HASH PASSWORD
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-      if (error) return res.json({ success: false });
+    const { error } = await supabase.from("users").insert({
+      username: email,
+      password: hashedPassword,
+      hours: 0,
+      pts: 0
+    });
 
-      res.json({ success: true });
+    if (error) return res.json({ success: false });
 
-    } catch {
-      res.json({ success: false });
+    res.json({ success: true });
+
+  } catch {
+    res.json({ success: false });
+  }
+});
+
+
+// ================= LOGIN =================
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.json({ success: false, error: "Missing fields" });
     }
+
+// ================= ADMIN LOGIN =================
+const { data: admin } = await supabase
+  .from("admin")
+  .select("*")
+  .eq("username", email)
+  .maybeSingle();
+
+if (admin) {
+  const isMatch = await bcrypt.compare(password, admin.password);
+
+  if (!isMatch) {
+    return res.json({ success: false });
+  }
+
+  return res.json({
+    success: true,
+    hrs: admin.hours || 0,
+    pts: admin.pts || 0,
+    isAdmin: true
+  });
+}
+// ================= USER LOGIN =================
+const { data: user } = await supabase
+  .from("users")
+  .select("*")
+  .eq("username", email)
+  .maybeSingle();
+
+if (!user) {
+  return res.json({ success: false });
+}
+
+const isMatch = await bcrypt.compare(password, user.password);
+
+if (!isMatch) {
+  return res.json({ success: false });
+}
+
+// 🔥 SESSION CHECK (MOVE HERE)
+const { data: session } = await supabase
+  .from("sessions")
+  .select("*")
+  .eq("username", email)
+  .maybeSingle();
+
+let currentTime = user.hours || 0;
+
+if (session) {
+  currentTime = session.time_left;
+} else {
+  await supabase.from("sessions").insert({
+    username: email,
+    time_left: user.hours || 0,
+    updated_at: new Date()
   });
 
-  // ================= LOGIN =================
-  app.post("/login", async (req, res) => {
-    try {
-      const { email, password } = req.body;
+  currentTime = user.hours || 0;
+}
 
-      // ================= ADMIN LOGIN =================
-      const { data: admin } = await supabase
-        .from("admin")
-        .select("*")
-        .eq("username", email)
-        .eq("password", password)
-        .maybeSingle();
+return res.json({
+  success: true,
+  hrs: currentTime,
+  pts: user.pts || 0,
+  isAdmin: false
+});
+} catch (err) {
+  console.log("LOGIN ERROR:", err);
+  res.json({ success: false });
+}
+});
 
-      if (admin) {
-        return res.json({
-          success: true,
-          hrs: admin.hours || 0,
-          pts: admin.pts || 0,
-          isAdmin: true
-        });
-      }
-
-      // ================= USER LOGIN =================
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("username", email)
-        .eq("password", password)
-        .maybeSingle();
-
-      if (!user) {
-        return res.json({ success: false });
-      }
-
-      // ================= SESSION CHECK =================
-      const { data: session } = await supabase
-        .from("sessions")
-        .select("*")
-        .eq("username", email)
-        .maybeSingle();
-
-      let currentTime = user.hours || 0;
-
-      if (session) {
-        // ✅ EXISTING SESSION → USE IT
-        currentTime = session.time_left;
-      } else {
-        // 🔥 FIRST TIME LOGIN → CREATE SESSION
-        await supabase
-          .from("sessions")
-          .insert({
-            username: email,
-            time_left: user.hours || 0,
-            updated_at: new Date()
-          });
-
-        currentTime = user.hours || 0;
-      }
-
-      // ================= RESPONSE =================
-      res.json({
-        success: true,
-        hrs: currentTime,
-        pts: user.pts || 0,
-        isAdmin: false
-      });
-
-    } catch (err) {
-      console.log("LOGIN ERROR:", err);
-      res.json({ success: false });
-    }
-  });
-
-  // ================= ADMIN ADD =================
+// ================= ADMIN ADD =================
   app.post("/admin-add", async (req, res) => {
     try {
       const { email, hrs, pts } = req.body;
@@ -437,52 +450,62 @@ app.post("/webhook", async (req, res) => {
 app.post("/launch-agent", async (req, res) => {
   try {
     const agentBase = process.env.AGENT_URL;
-
     const { path, sessionId } = req.body;
 
-    if (!path || typeof path !== "string") {
-      return res.json({ success: false, error: "Invalid path" });
+    if (!path || !sessionId) {
+      console.log("❌ Missing path or sessionId");
+      return res.json({ success: false });
     }
 
-    if (!sessionId) {
-      return res.json({ success: false, error: "Missing sessionId" });
+    console.log("🚀 Launch-agent request:", { path, sessionId });
+
+    // 🔥 GET GAME FROM DB (to get window_name)
+    const { data: game, error } = await supabase
+      .from("games")
+      .select("*")
+      .eq("exe_path", path)
+      .maybeSingle();
+
+    if (error) {
+      console.log("❌ DB error:", error);
+      return res.json({ success: false });
     }
 
-    console.log("🚀 Launching with session:", sessionId);
-
-    const agentToken = process.env.AGENT_LAUNCH_TOKEN || "";
-
-    const headers = {
-      "Content-Type": "application/json"
-    };
-
-    if (agentToken) {
-      headers["x-agent-token"] = agentToken;
+    if (!game) {
+      console.log("⚠️ Game not found for path:", path);
     }
 
-    // ✅ Check agent alive
-    const statusRes = await fetch(`${agentBase}/status`);
-    if (!statusRes.ok) {
-      return res.json({ success: false, error: "Agent offline" });
+    const windowName = game?.window_name;
+
+    console.log("🎯 Window target:", windowName);
+
+    // ⚠️ Safety log (important for debugging)
+    if (!windowName) {
+      console.log("⚠️ window_name missing → may capture full screen");
     }
 
-    // ✅ SEND sessionId to agent
+    // 🔥 SEND TO AGENT
     const launchRes = await fetch(`${agentBase}/launch-agent`, {
       method: "POST",
-      headers,
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         path,
-        sessionId   // 🔥 THIS IS THE FIX
+        sessionId,
+        windowName   // 🔥 KEY FIX
       })
     });
 
     const data = await launchRes.json();
 
+    console.log("✅ Agent response:", data);
+
     return res.json(data);
 
   } catch (err) {
     console.log("❌ LAUNCH AGENT ERROR:", err);
-    return res.json({ success: false, error: "Agent connection failed" });
+    return res.json({ success: false });
   }
 });
 
@@ -523,6 +546,8 @@ app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
 
+    const agentBase = process.env.AGENT_URL;
+
     // 🔁 Check if user already has PC
     const { data: existing } = await supabase
       .from("pcs")
@@ -533,6 +558,25 @@ app.post("/assign-pc", async (req, res) => {
     // 🔥 ALWAYS CREATE NEW SESSION
     const sessionId = uuidv4();
 
+    // 🔥 GET GAME DATA (IMPORTANT)
+    const { data: gameData, error: gameError } = await supabase
+      .from("games")
+      .select("*")
+      .eq("name", game)
+      .single();
+
+    if (gameError || !gameData) {
+      console.log("❌ Game not found");
+      return res.json({ success: false, error: "Game not found" });
+    }
+
+    const exePath = gameData.exe_path;
+    const windowName = gameData.window_name;
+
+    console.log("🎯 Game selected:", gameData.name);
+    console.log("🎯 Window target:", windowName);
+
+    // 🔥 EXISTING PC CASE
     if (existing) {
       activeSessions[sessionId] = {
         username,
@@ -540,6 +584,19 @@ app.post("/assign-pc", async (req, res) => {
       };
 
       console.log("🎮 Session created (existing):", sessionId);
+
+      // 🔥 SEND TO AGENT
+      await fetch(`${agentBase}/launch-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          path: exePath,
+          sessionId,
+          windowName
+        })
+      });
 
       return res.json({
         success: true,
@@ -557,7 +614,7 @@ app.post("/assign-pc", async (req, res) => {
       .limit(1);
 
     if (!pcs || pcs.length === 0) {
-      return res.json({ success: false });
+      return res.json({ success: false, error: "No PC available" });
     }
 
     const pc = pcs[0];
@@ -581,35 +638,28 @@ app.post("/assign-pc", async (req, res) => {
 
     console.log("🎮 Session created:", sessionId);
 
-// 🔥 SEND SESSION TO AGENT (FIX)
-try {
-  const agentBase = process.env.AGENT_URL;
-
-  if (agentBase) {
+    // 🔥 SEND FULL DATA TO AGENT
     await fetch(`${agentBase}/launch-agent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        path: "",          // keep empty if already launched separately
-        sessionId: sessionId
+        path: exePath,
+        sessionId,
+        windowName
       })
     });
 
-    console.log("✅ Session sent to agent:", sessionId);
-  }
-} catch (err) {
-  console.log("❌ Agent session send failed:", err);
-}
+    console.log("✅ Session sent to agent");
 
-// ✅ RESPONSE (UNCHANGED)
-res.json({
-  success: true,
-  pc: pc.name,
-  sessionId,
-  streamBaseUrl
-});
+    // ✅ FINAL RESPONSE (ONLY ONCE)
+    res.json({
+      success: true,
+      pc: pc.name,
+      sessionId,
+      streamBaseUrl
+    });
 
   } catch (err) {
     console.log("ASSIGN PC ERROR:", err);
@@ -649,12 +699,13 @@ res.json({
 
       // 🔥 Insert new games
       const { error } = await supabase.from("games").insert(
-        games.map(g => ({
-          name: g.name,
-          img: g.img,
-          desc: g.desc,
-          exe_path: g.exePath
-        }))
+       games.map(g => ({
+  name: g.name,
+  img: g.img,
+  desc: g.desc,
+  exe_path: g.exePath,
+  window_name: g.windowName || g.name   // 🔥 IMPORTANT
+}))
       );
 
       if (error) {
@@ -688,7 +739,8 @@ res.json({
         name: g.name,
         img: g.img,
         desc: g.desc,
-        exePath: g.exe_path
+        exePath: g.exe_path,
+windowName: g.window_name
       }));
 
       res.json({ success: true, games });
@@ -715,7 +767,3 @@ app.get("/health", (req, res) => {
 app.head("/health", (req, res) => {
   res.status(200).end();
 });
-
-
-
-
