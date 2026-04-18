@@ -440,9 +440,10 @@ app.post("/webhook", async (req, res) => {
  app.post("/create-order", async (req, res) => {
   try {
     const { amount, username, paymentEmail, paymentPhone } = req.body;
+    const orderAmount = Number(String(amount ?? "").replace(/[^\d.]/g, ""));
     const loginEmail = sanitizeEmail(username);
 
-    if (!loginEmail || !amount) {
+    if (!loginEmail || !Number.isFinite(orderAmount) || orderAmount <= 0) {
       return res.json({ success: false, error: "Invalid order payload" });
     }
 
@@ -490,7 +491,7 @@ app.post("/webhook", async (req, res) => {
       },
       body: JSON.stringify({
         order_id: orderId,
-        order_amount: amount,
+        order_amount: orderAmount,
         order_currency: "INR",
         customer_details: {
           customer_id: customerId,
