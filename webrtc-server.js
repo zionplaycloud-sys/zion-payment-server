@@ -13,12 +13,22 @@ wss.on("connection", (ws) => {
   let role = null;
 
   ws.on("message", (msg) => {
-    const data = JSON.parse(msg.toString());
+    let data;
+    try {
+      data = JSON.parse(msg.toString());
+    } catch {
+      console.log("⚠️ Invalid JSON message ignored");
+      return;
+    }
 
     // ===============================
     // 👀 VIEWER JOIN
     // ===============================
     if (data.type === "join-viewer") {
+      if (!data.sessionId) {
+        console.log("⚠️ join-viewer missing sessionId");
+        return;
+      }
       currentSessionId = data.sessionId;
       role = "viewer";
 
@@ -41,11 +51,15 @@ wss.on("connection", (ws) => {
     // ===============================
     // 🟢 AGENT JOIN
     // ===============================
-    if (
+if (
   data.type === "join-agent" ||
   data.type === "join-broadcaster" ||
   data.type === "agent-join" // 🔥 ADD THIS
 ) {
+      if (!data.sessionId) {
+        console.log("⚠️ join-agent missing sessionId");
+        return;
+      }
       currentSessionId = data.sessionId;
       role = "agent";
 
@@ -69,6 +83,10 @@ wss.on("connection", (ws) => {
     // 🔁 SIGNALING
     // ===============================
     if (["offer", "answer", "ice-candidate"].includes(data.type)) {
+      if (!data.sessionId) {
+        console.log(`⚠️ ${data.type} missing sessionId`);
+        return;
+      }
       const s = sessions[data.sessionId];
       if (!s) return;
 
@@ -97,6 +115,10 @@ wss.on("connection", (ws) => {
     // 🎮 INPUT
     // ===============================
     if (data.type === "input") {
+      if (!data.sessionId) {
+        console.log("⚠️ input missing sessionId");
+        return;
+      }
       sessions[data.sessionId]?.broadcaster?.send(JSON.stringify(data));
     }
   });

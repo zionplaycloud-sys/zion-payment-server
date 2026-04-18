@@ -450,7 +450,7 @@ app.post("/webhook", async (req, res) => {
 app.post("/launch-agent", async (req, res) => {
   try {
     const agentBase = process.env.AGENT_URL;
-    const { path, sessionId } = req.body;
+    const { path, sessionId, windowName: requestedWindowName, game: requestedGameName } = req.body;
 
     if (!path || !sessionId) {
       console.log("❌ Missing path or sessionId");
@@ -475,7 +475,11 @@ app.post("/launch-agent", async (req, res) => {
       console.log("⚠️ Game not found for path:", path);
     }
 
-    const windowName = game?.window_name;
+    const windowName =
+      game?.window_name ||
+      requestedWindowName ||
+      requestedGameName ||
+      "";
 
     console.log("🎯 Window target:", windowName);
 
