@@ -36,6 +36,19 @@
     return digits;
   }
 
+  function makeCustomerId(username) {
+    const base = (username || "")
+      .toString()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    const normalized = (base || "user").slice(0, 24);
+    const suffix = Date.now().toString().slice(-6);
+    return `cust_${normalized}_${suffix}`;
+  }
+
   function readPaymentContactFromUser(user) {
     if (!user) {
       return { email: "", phone: "" };
@@ -453,6 +466,7 @@ app.post("/webhook", async (req, res) => {
 
     const customerEmail = requestedEmail || storedContact.email || loginEmail;
     const customerPhone = requestedPhone || storedContact.phone;
+    const customerId = makeCustomerId(username);
 
     if (!customerPhone) {
       return res.json({
@@ -479,7 +493,7 @@ app.post("/webhook", async (req, res) => {
         order_amount: amount,
         order_currency: "INR",
         customer_details: {
-          customer_id: username,
+          customer_id: customerId,
           customer_email: customerEmail,
           customer_phone: customerPhone
         }
