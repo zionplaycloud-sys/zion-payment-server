@@ -443,8 +443,16 @@ app.post("/webhook", async (req, res) => {
     const orderAmount = Number(String(amount ?? "").replace(/[^\d.]/g, ""));
     const loginEmail = sanitizeEmail(username);
 
-    if (!loginEmail || !Number.isFinite(orderAmount) || orderAmount <= 0) {
-      return res.json({ success: false, error: "Invalid order payload" });
+    if (!username || !Number.isFinite(orderAmount) || orderAmount <= 0) {
+      return res.json({
+        success: false,
+        error: "Invalid order payload",
+        details: {
+          usernamePresent: Boolean(username),
+          amountRaw: amount,
+          amountParsed: orderAmount
+        }
+      });
     }
 
     const { data: user } = await supabase
@@ -468,6 +476,14 @@ app.post("/webhook", async (req, res) => {
     const customerEmail = requestedEmail || storedContact.email || loginEmail;
     const customerPhone = requestedPhone || storedContact.phone;
     const customerId = makeCustomerId(username);
+
+    if (!customerEmail) {
+      return res.json({
+        success: false,
+        error: "Missing customer email",
+        contactRequired: true
+      });
+    }
 
     if (!customerPhone) {
       return res.json({
