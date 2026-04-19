@@ -507,85 +507,117 @@ app.post("/webhook", async (req, res) => {
     console.log("🔥 Cashfree webhook received:");
     console.log(JSON.stringify(data, null, 2));
 
-    // ✅ Check payment success
-    const isSuccess =
-      data.type === "PAYMENT_SUCCESS_WEBHOOK" ||
-      data.data?.payment?.payment_status === "SUCCESS";
+    const payment = data.data?.payment;
+    const order = data.data?.order;
 
-    if (!isSuccess) {
-      console.log("⚠️ Not a success event");
+    // =========================
+    // ✅ ONLY PROCESS SUCCESS
+    // =========================
+    if (payment?.payment_status !== "SUCCESS") {
+      console.log("⚠️ Not a success payment");
       return res.sendStatus(200);
     }
 
-    const order = data.data?.order || {};
+    const orderId = order?.order_id;
     const amount = Number(order?.order_amount);
-    const tagUsername = (order?.order_tags?.username || "").toString().trim();
-    const fallbackEmail =
-      data.data?.customer_details?.customer_email ||
-      order?.customer_details?.customer_email;
+    const username = order?.order_tags?.username;
 
-    const username = tagUsername || fallbackEmail;
-    const plan = getPlanByAmount(amount);
-
-    console.log("📦 Webhook user:", username);
-    console.log("💰 Webhook amount:", amount, typeof amount);
-
-    if (!username || !plan) {
-      console.log("❌ Missing username/valid plan amount");
+    if (!orderId || !username || !amount) {
+      console.log("❌ Missing data");
       return res.sendStatus(400);
     }
 
-    const buyerCredit = await applyUserCredit(username, plan.hours, plan.cashBackPts);
+    // =========================
+    // 🚫 PREVENT DUPLICATE WEBHOOK
+    // =========================
+    const { data: existing } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("order_id", orderId)
+      .maybeSingle();
+
+    if (existing) {
+      console.log("⚠️ Duplicate webhook ignored");
+      return res.sendStatus(200);
+    }
+
+    // Save payment (mark processed)
+    await supabase.from("payments").insert({
+      order_id: orderId,
+      username: username,
+      amount: amount
+    });
+
+    const plan = getPlanByAmount(amount);
+
+    if (!plan) {
+      console.log("❌ Invalid plan");
+      return res.sendStatus(400);
+    }
+
+    // =========================
+    // 🔥 GET USER BEFORE CREDIT
+    // =========================
+    const { data: userBefore } = await supabase
+      .from("users")
+      .select("hours")
+      .eq("username", username)
+      .maybeSingle();
+
+    // =========================
+    // 💰 APPLY MAIN PURCHASE
+    // =========================
+    const buyerCredit = await applyUserCredit(
+      username,
+      plan.hours,
+      plan.cashBackPts
+    );
+
     if (!buyerCredit.success) {
       console.log("❌ Buyer credit failed:", buyerCredit.error);
       return res.sendStatus(500);
     }
 
     // =========================
-// 🎁 REFERRAL + NEW USER BONUS (FIXED)
-// =========================
+    // 🎯 FIRST PURCHASE CHECK
+    // =========================
+    const isFirstPurchase = userBefore && userBefore.hours === 0;
 
-// Get buyer referral info
-const { data: buyer } = await supabase
-  .from("users")
-  .select("referred_by")
-  .eq("username", username)
-  .maybeSingle();
-
-// Get session (to detect first purchase)
-const { data: session } = await supabase
-  .from("sessions")
-  .select("time_left")
-  .eq("username", username)
-  .maybeSingle();
-
-// First purchase check
-const isFirstPurchase = session && session.time_left === plan.hours;
-
-// 🎁 NEW USER BONUS (+30 min)
-if (isFirstPurchase) {
-  await applyUserCredit(username, 0, 30);
-  console.log("🎁 New user bonus applied (+30 mins)");
-}
-
-
-// 🎁 REFERRAL BONUS (POINTS ONLY)
-const referrer = buyer?.referred_by;
-
-if (referrer && isFirstPurchase) {
-  const referralPts = Math.floor(plan.amount * 0.2);
-
-  const referralCredit = await applyUserCredit(referrer, 0, referralPts);
-
-  if (referralCredit.success) {
-    console.log("🎁 Referral points applied to", referrer, referralPts);
-  } else {
-    console.log("⚠️ Referral bonus failed:", referralCredit.error);
-  }
-
+    // =========================
+    // 🎁 NEW USER BONUS (0.5 hr)
+    // =========================
+    if (isFirstPurchase) {
+      console.log("🎁 Adding 0.5 bonus");
+      await applyUserCredit(username, 0.5, 0);
     }
 
-    console.log("🔥 SUCCESS: Cash purchase credited →", username, {
+    // =========================
+    // 🎁 REFERRAL BONUS (POINTS ONLY)
+    // =========================
+    const { data: buyer } = await supabase
+      .from("users")
+      .select("referred_by")
+      .eq("username", username)
+      .maybeSingle();
+
+    const referrer = buyer?.referred_by;
+
+    if (referrer && isFirstPurchase) {
+      const referralPts = Math.floor(plan.amount * 0.2);
+
+      const referralCredit = await applyUserCredit(referrer, 0, referralPts);
+
+      if (referralCredit.success) {
+        console.log("🎁 Referral points applied:", referrer, referralPts);
+      } else {
+        console.log("⚠️ Referral failed:", referralCredit.error);
+      }
+    }
+
+    // =========================
+    // ✅ FINAL LOG
+    // =========================
+    console.log("🔥 SUCCESS:", username, {
       hours: plan.hours,
       cashbackPts: plan.cashBackPts
     });
