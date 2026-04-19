@@ -98,8 +98,8 @@
       .select("*")
       .eq("username", username)
       .maybeSingle();
-      
-const currentTime = session ? Number(session.time_left) : Number(user.hours);
+
+const currentTime = session ? Number(session.time_left) : 0;
 const newTime = currentTime + Number(addHours || 0);
 
     const { error: sessionError } = await supabase
@@ -566,20 +566,6 @@ app.post("/webhook", async (req, res) => {
       .maybeSingle();
 
     // =========================
-    // 💰 APPLY MAIN PURCHASE
-    // =========================
-    const buyerCredit = await applyUserCredit(
-      username,
-      plan.hours,
-      plan.cashBackPts
-    );
-
-    if (!buyerCredit.success) {
-      console.log("❌ Buyer credit failed:", buyerCredit.error);
-      return res.sendStatus(500);
-    }
-
-    // =========================
     // 🎯 FIRST PURCHASE CHECK
     // =========================
     const isFirstPurchase = userBefore && userBefore.hours === 0;
@@ -587,10 +573,13 @@ app.post("/webhook", async (req, res) => {
     // =========================
     // 🎁 NEW USER BONUS (0.5 hr)
     // =========================
-    if (isFirstPurchase) {
-      console.log("🎁 Adding 0.5 bonus");
-      await applyUserCredit(username, 0.5, 0);
-    }
+   const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
+
+await applyUserCredit(
+  username,
+  totalHours,
+  plan.cashBackPts
+);
 
     // =========================
     // 🎁 REFERRAL BONUS (POINTS ONLY)
