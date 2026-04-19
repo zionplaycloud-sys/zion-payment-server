@@ -635,48 +635,57 @@ app.post("/webhook", async (req, res) => {
 
     console.log("Creating order for:", customerEmail, orderAmount);
 
-    const orderId = "order_" + Date.now();
+const orderId = "order_" + Date.now();
 
-    const response = await fetch("https://api.cashfree.com/pg/orders", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-version": "2022-09-01",
-        "x-client-id": process.env.CASHFREE_APP_ID,
-        "x-client-secret": process.env.CASHFREE_SECRET_KEY
-      },
-      body: JSON.stringify({
-        order_id: orderId,
-        order_amount: orderAmount,
-        order_currency: "INR",
-        order_tags: {
-          username
-        },
-        customer_details: {
-          customer_id: customerId,
-          customer_email: customerEmail,
-          customer_phone: customerPhone
-        }
-      })
-    });
+// 🔥 AUTO SWITCH (SANDBOX / PRODUCTION)
+const CASHFREE_BASE_URL =
+  process.env.CASHFREE_MODE === "sandbox"
+    ? "https://sandbox.cashfree.com/pg"
+    : "https://api.cashfree.com/pg";
 
-    const data = await response.json();
+console.log("🌐 Using Cashfree URL:", CASHFREE_BASE_URL);
 
-    if (!response.ok) {
-      console.log("Cashfree error response:", data);
-      return res.json({
-        success: false,
-        error: data?.message || data?.error?.message || "Cashfree order failed"
-      });
+const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-version": "2022-09-01",
+    "x-client-id": process.env.CASHFREE_APP_ID,
+    "x-client-secret": process.env.CASHFREE_SECRET_KEY
+  },
+  body: JSON.stringify({
+    order_id: orderId,
+    order_amount: orderAmount,
+    order_currency: "INR",
+    order_tags: {
+      username
+    },
+    customer_details: {
+      customer_id: customerId,
+      customer_email: customerEmail,
+      customer_phone: customerPhone
     }
+  })
+});
 
-    // ✅ NOW LOG HERE (CORRECT PLACE)
-    console.log("Cashfree FULL response:", data);
+const data = await response.json();
 
-    res.json({
-      success: true,
-      payment_session_id: data.payment_session_id
-    });
+// 🔴 ERROR HANDLING
+if (!response.ok) {
+  console.log("❌ Cashfree error response:", data);
+  return res.json({
+    success: false,
+    error: data?.message || data?.error?.message || "Cashfree order failed"
+  });
+}
+
+// ✅ SUCCESS LOG
+console.log("✅ Cashfree FULL response:", data);
+
+res.json({
+  success: true,
+  payment_session_id: data.payment_session_id
+});
 
   } catch (err) {
     console.log("CREATE ORDER ERROR:", err);
