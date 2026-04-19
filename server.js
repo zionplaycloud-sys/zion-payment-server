@@ -541,26 +541,49 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(500);
     }
 
-    // Referral reward: referrer gets +30 mins + same package hours + 20% of amount in pts.
-    const { data: buyer } = await supabase
-      .from("users")
-      .select("referred_by")
-      .eq("username", username)
-      .maybeSingle();
+    // =========================
+// 🎁 REFERRAL + NEW USER BONUS (FIXED)
+// =========================
 
-    const referrer = buyer?.referred_by;
-    if (referrer) {
-      const referralHours = plan.hours + 0.5;
-      const referralPts = Math.floor(plan.amount * 0.2);
-      const referralCredit = await applyUserCredit(referrer, referralHours, referralPts);
-      if (referralCredit.success) {
-        console.log("🎁 Referral bonus applied to", referrer, {
-          referralHours,
-          referralPts
-        });
-      } else {
-        console.log("⚠️ Referral bonus failed:", referralCredit.error);
-      }
+// Get buyer referral info
+const { data: buyer } = await supabase
+  .from("users")
+  .select("referred_by")
+  .eq("username", username)
+  .maybeSingle();
+
+// Get session (to detect first purchase)
+const { data: session } = await supabase
+  .from("sessions")
+  .select("time_left")
+  .eq("username", username)
+  .maybeSingle();
+
+// First purchase check
+const isFirstPurchase = session && session.time_left === plan.hours;
+
+
+// 🎁 NEW USER BONUS (+30 min)
+if (isFirstPurchase) {
+  await applyUserCredit(username, 0.5, 0);
+  console.log("🎁 New user bonus applied (+30 mins)");
+}
+
+
+// 🎁 REFERRAL BONUS (POINTS ONLY)
+const referrer = buyer?.referred_by;
+
+if (referrer && isFirstPurchase) {
+  const referralPts = Math.floor(plan.amount * 0.2);
+
+  const referralCredit = await applyUserCredit(referrer, 0, referralPts);
+
+  if (referralCredit.success) {
+    console.log("🎁 Referral points applied to", referrer, referralPts);
+  } else {
+    console.log("⚠️ Referral bonus failed:", referralCredit.error);
+  }
+
     }
 
     console.log("🔥 SUCCESS: Cash purchase credited →", username, {
