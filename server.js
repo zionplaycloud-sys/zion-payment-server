@@ -568,18 +568,28 @@ app.post("/webhook", async (req, res) => {
     // =========================
     // 🎯 FIRST PURCHASE CHECK
     // =========================
-    const isFirstPurchase = userBefore && userBefore.hours === 0;
+    const isFirstPurchase = !userBefore || Number(userBefore.hours || 0) === 0;
+
+    console.log("🧠 First purchase check:", {
+  userBefore,
+  isFirstPurchase
+});
 
     // =========================
     // 🎁 NEW USER BONUS (0.5 hr)
     // =========================
-   const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
+  const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
 
-await applyUserCredit(
+const buyerCredit = await applyUserCredit(
   username,
   totalHours,
   plan.cashBackPts
 );
+
+if (!buyerCredit.success) {
+  console.log("❌ Buyer credit failed:", buyerCredit.error);
+  return res.sendStatus(500);
+}
 
     // =========================
     // 🎁 REFERRAL BONUS (POINTS ONLY)
