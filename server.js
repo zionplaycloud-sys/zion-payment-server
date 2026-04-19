@@ -49,6 +49,88 @@
     return `cust_${normalized}_${suffix}`;
   }
 
+  const SHOP_PLANS = [
+    { id: "p100", amount: 100, hours: 1, cashBackPts: 10 },
+    { id: "p199", amount: 199, hours: 3, cashBackPts: 19 },
+    { id: "p499", amount: 499, hours: 8, cashBackPts: 49, featured: true },
+    { id: "p999", amount: 999, hours: 20, cashBackPts: 99 },
+    { id: "p2499", amount: 2499, hours: 60, cashBackPts: 249 }
+  ];
+
+  const POINTS_MARKUP_MULTIPLIER = 1.3; // +30% points cost
+
+  function getPlanByAmount(rawAmount) {
+    const amount = Number(String(rawAmount ?? "").replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const rounded = Math.round(amount);
+    return SHOP_PLANS.find((p) => p.amount === rounded) || null;
+  }
+
+  function pointsCostForPlan(plan) {
+    return Math.ceil(plan.amount * POINTS_MARKUP_MULTIPLIER);
+  }
+
+  async function applyUserCredit(username, addHours = 0, addPts = 0) {
+    const { data: user, error: userErr } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .maybeSingle();
+
+    if (userErr || !user) {
+      return { success: false, error: "User not found" };
+    }
+
+    const newHours = (user.hours || 0) + Number(addHours || 0);
+    const newPts = (user.pts || 0) + Number(addPts || 0);
+
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ hours: newHours, pts: newPts })
+      .eq("username", username);
+
+    if (updateError) {
+      return { success: false, error: updateError.message || "Failed to update user" };
+    }
+
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("*")
+      .eq("username", username)
+      .maybeSingle();
+
+    const newTime = (session?.time_left || 0) + Number(addHours || 0);
+
+    const { error: sessionError } = await supabase
+      .from("sessions")
+      .upsert({
+        username,
+        time_left: newTime,
+        updated_at: new Date()
+      });
+
+    if (sessionError) {
+      return { success: false, error: sessionError.message || "Failed to update session" };
+    }
+
+    return { success: true, hours: newHours, pts: newPts, timeLeft: newTime };
+  }
+
+  async function generateUniqueReferralCode() {
+    for (let i = 0; i < 20; i++) {
+      const candidate = `zpc${Math.floor(100000 + Math.random() * 900000)}`;
+      const { data: taken } = await supabase
+        .from("users")
+        .select("username")
+        .eq("referral_code", candidate)
+        .maybeSingle();
+      if (!taken) {
+        return candidate;
+      }
+    }
+    return "";
+  }
+
   function readPaymentContactFromUser(user) {
     if (!user) {
       return { email: "", phone: "" };
@@ -102,9 +184,9 @@
   });
 
   // ================= SIGNUP =================
-  app.post("/signup", async (req, res) => {
+app.post("/signup", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, referralCode } = req.body;
 
     const { data: existing } = await supabase
       .from("users")
@@ -114,22 +196,51 @@
 
     if (existing) return res.json({ success: false });
 
+    const cleanReferralCode = (referralCode || "").toString().trim().toLowerCase();
+    let referredBy = null;
+
+    if (cleanReferralCode) {
+      const { data: refUser } = await supabase
+        .from("users")
+        .select("username")
+        .eq("referral_code", cleanReferralCode)
+        .maybeSingle();
+
+      if (!refUser) {
+        return res.json({ success: false, error: "Invalid referral code" });
+      }
+
+      if (refUser.username === email) {
+        return res.json({ success: false, error: "Cannot use own referral code" });
+      }
+
+      referredBy = refUser.username;
+    }
+
     // 🔥 HASH PASSWORD
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    const ownReferralCode = await generateUniqueReferralCode();
+
+    if (!ownReferralCode) {
+      return res.json({ success: false, error: "Failed to generate referral code" });
+    }
 
     const { error } = await supabase.from("users").insert({
       username: email,
       password: hashedPassword,
       hours: 0,
-      pts: 0
+      pts: 0,
+      referral_code: ownReferralCode,
+      referred_by: referredBy
     });
 
-    if (error) return res.json({ success: false });
+    if (error) return res.json({ success: false, error: error.message || "Signup failed" });
 
-    res.json({ success: true });
+    res.json({ success: true, referralCode: ownReferralCode });
 
-  } catch {
-    res.json({ success: false });
+  } catch (err) {
+    res.json({ success: false, error: err?.message || "Signup failed" });
   }
 });
 
@@ -181,6 +292,17 @@ if (!isMatch) {
   return res.json({ success: false });
 }
 
+if (!user.referral_code) {
+  const generated = await generateUniqueReferralCode();
+  if (generated) {
+    await supabase
+      .from("users")
+      .update({ referral_code: generated })
+      .eq("username", email);
+    user.referral_code = generated;
+  }
+}
+
 // 🔥 SESSION CHECK (MOVE HERE)
 const { data: session } = await supabase
   .from("sessions")
@@ -208,7 +330,9 @@ return res.json({
   pts: user.pts || 0,
   isAdmin: false,
   paymentEmail: readPaymentContactFromUser(user).email,
-  paymentPhone: readPaymentContactFromUser(user).phone
+  paymentPhone: readPaymentContactFromUser(user).phone,
+  referralCode: user.referral_code || "",
+  referredBy: user.referred_by || ""
 });
 } catch (err) {
   console.log("LOGIN ERROR:", err);
@@ -237,6 +361,60 @@ return res.json({
     } catch (err) {
       console.log("SAVE PAYMENT CONTACT ERROR:", err);
       return res.json({ success: false, error: "Failed to save payment contact" });
+    }
+  });
+
+  app.post("/buy-with-points", async (req, res) => {
+    try {
+      const { username, amount } = req.body || {};
+      if (!username) {
+        return res.json({ success: false, error: "Username required" });
+      }
+
+      const plan = getPlanByAmount(amount);
+      if (!plan) {
+        return res.json({ success: false, error: "Invalid plan amount" });
+      }
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("*")
+        .eq("username", username)
+        .maybeSingle();
+
+      if (!user) {
+        return res.json({ success: false, error: "User not found" });
+      }
+
+      const requiredPoints = pointsCostForPlan(plan);
+      const currentPoints = Number(user.pts || 0);
+      if (currentPoints < requiredPoints) {
+        return res.json({
+          success: false,
+          error: "Not enough points",
+          requiredPoints,
+          currentPoints
+        });
+      }
+
+      const credit = await applyUserCredit(username, plan.hours, -requiredPoints);
+      if (!credit.success) {
+        return res.json({ success: false, error: credit.error || "Purchase failed" });
+      }
+
+      return res.json({
+        success: true,
+        mode: "points",
+        planAmount: plan.amount,
+        hoursAdded: plan.hours,
+        pointsSpent: requiredPoints,
+        pts: credit.pts,
+        hrs: credit.hours,
+        timeLeft: credit.timeLeft
+      });
+    } catch (err) {
+      console.log("BUY WITH POINTS ERROR:", err);
+      return res.json({ success: false, error: err?.message || "Purchase failed" });
     }
   });
 
@@ -339,95 +517,56 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ Extract email safely
-    const email =
+    const order = data.data?.order || {};
+    const amount = Number(order?.order_amount);
+    const tagUsername = (order?.order_tags?.username || "").toString().trim();
+    const fallbackEmail =
       data.data?.customer_details?.customer_email ||
-      data.data?.order?.customer_details?.customer_email;
+      order?.customer_details?.customer_email;
 
-    // ✅ Extract & FIX amount type
-    const amount = Number(data.data?.order?.order_amount);
+    const username = tagUsername || fallbackEmail;
+    const plan = getPlanByAmount(amount);
 
-    console.log("📦 Webhook email:", email);
+    console.log("📦 Webhook user:", username);
     console.log("💰 Webhook amount:", amount, typeof amount);
 
-    if (!email || !amount) {
-      console.log("❌ Missing email or amount");
+    if (!username || !plan) {
+      console.log("❌ Missing username/valid plan amount");
       return res.sendStatus(400);
     }
 
-    // ✅ Convert amount → hours
-    let hours = 0;
-
-    if (amount === 49) hours = 1;
-    else if (amount === 99) hours = 2;
-    else if (amount === 249) hours = 6;
-    else if (amount === 399) hours = 10;
-    else if (amount === 699) hours = 20;
-
-    console.log("⏱️ Hours to add:", hours);
-
-    if (hours === 0) {
-      console.log("⚠️ Amount not mapped to any plan");
-      return res.sendStatus(200);
+    const buyerCredit = await applyUserCredit(username, plan.hours, plan.cashBackPts);
+    if (!buyerCredit.success) {
+      console.log("❌ Buyer credit failed:", buyerCredit.error);
+      return res.sendStatus(500);
     }
 
-    // ✅ GET USER (IMPORTANT: adjust column if needed)
-    const { data: user, error: userError } = await supabase
+    // Referral reward: referrer gets +30 mins + same package hours + 20% of amount in pts.
+    const { data: buyer } = await supabase
       .from("users")
-      .select("*")
-      .eq("username", email) // ⚠️ change to "email" if your DB uses email column
+      .select("referred_by")
+      .eq("username", username)
       .maybeSingle();
 
-    if (userError) {
-      console.log("❌ User fetch error:", userError);
-      return res.sendStatus(500);
+    const referrer = buyer?.referred_by;
+    if (referrer) {
+      const referralHours = plan.hours + 0.5;
+      const referralPts = Math.floor(plan.amount * 0.2);
+      const referralCredit = await applyUserCredit(referrer, referralHours, referralPts);
+      if (referralCredit.success) {
+        console.log("🎁 Referral bonus applied to", referrer, {
+          referralHours,
+          referralPts
+        });
+      } else {
+        console.log("⚠️ Referral bonus failed:", referralCredit.error);
+      }
     }
 
-    if (!user) {
-      console.log("⚠️ User not found:", email);
-      return res.sendStatus(200);
-    }
-
-    // ✅ UPDATE HOURS
-    const newHours = (user.hours || 0) + hours;
-
-    const { error: updateError } = await supabase
-      .from("users")
-      .update({ hours: newHours })
-      .eq("username", email); // ⚠️ same here
-
-    if (updateError) {
-      console.log("❌ Update error:", updateError);
-      return res.sendStatus(500);
-    }
-
-    // ✅ HANDLE SESSION
-    const { data: session } = await supabase
-      .from("sessions")
-      .select("*")
-      .eq("username", email)
-      .maybeSingle();
-
-    let newTime = hours;
-
-    if (session) {
-      newTime = (session.time_left || 0) + hours;
-    }
-
-    const { error: sessionError } = await supabase
-      .from("sessions")
-      .upsert({
-        username: email,
-        time_left: newTime,
-        updated_at: new Date()
-      });
-
-    if (sessionError) {
-      console.log("❌ Session update error:", sessionError);
-      return res.sendStatus(500);
-    }
-
-    console.log("🔥 SUCCESS: Hours added →", email, hours);
+    console.log("🔥 SUCCESS: Cash purchase credited →", username, {
+      hours: plan.hours,
+      cashbackPts: plan.cashBackPts
+    });
 
     res.sendStatus(200);
 
@@ -440,17 +579,18 @@ app.post("/webhook", async (req, res) => {
  app.post("/create-order", async (req, res) => {
   try {
     const { amount, username, paymentEmail, paymentPhone } = req.body;
-    const orderAmount = Number(String(amount ?? "").replace(/[^\d.]/g, ""));
+    const plan = getPlanByAmount(amount);
+    const orderAmount = plan?.amount || Number.NaN;
     const loginEmail = sanitizeEmail(username);
 
-    if (!username || !Number.isFinite(orderAmount) || orderAmount <= 0) {
+    if (!username || !plan || !Number.isFinite(orderAmount) || orderAmount <= 0) {
       return res.json({
         success: false,
         error: "Invalid order payload",
         details: {
           usernamePresent: Boolean(username),
           amountRaw: amount,
-          amountParsed: orderAmount
+          amountParsed: Number.isFinite(orderAmount) ? orderAmount : null
         }
       });
     }
@@ -493,7 +633,7 @@ app.post("/webhook", async (req, res) => {
       });
     }
 
-    console.log("Creating order for:", customerEmail, amount);
+    console.log("Creating order for:", customerEmail, orderAmount);
 
     const orderId = "order_" + Date.now();
 
@@ -509,6 +649,9 @@ app.post("/webhook", async (req, res) => {
         order_id: orderId,
         order_amount: orderAmount,
         order_currency: "INR",
+        order_tags: {
+          username
+        },
         customer_details: {
           customer_id: customerId,
           customer_email: customerEmail,
