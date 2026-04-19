@@ -564,7 +564,7 @@ const isFirstPurchase = session && session.time_left === plan.hours;
 
 // 🎁 NEW USER BONUS (+30 min)
 if (isFirstPurchase) {
-  await applyUserCredit(username, 0.5, 0);
+  await applyUserCredit(username, 0.3, 0);
   console.log("🎁 New user bonus applied (+30 mins)");
 }
 
