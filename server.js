@@ -562,7 +562,6 @@ const { data: session } = await supabase
 // First purchase check
 const isFirstPurchase = session && session.time_left === plan.hours;
 
-
 // 🎁 NEW USER BONUS (+30 min)
 if (isFirstPurchase) {
   await applyUserCredit(username, 0.5, 0);
