@@ -98,8 +98,9 @@
       .select("*")
       .eq("username", username)
       .maybeSingle();
-
-    const newTime = (session?.time_left || 0) + Number(addHours || 0);
+      
+const currentTime = session ? Number(session.time_left) : Number(user.hours);
+const newTime = currentTime + Number(addHours || 0);
 
     const { error: sessionError } = await supabase
       .from("sessions")
