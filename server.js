@@ -852,24 +852,39 @@ app.post("/launch-agent", async (req, res) => {
       console.log("⚠️ window_name missing → may capture full screen");
     }
 
-    // 🔥 SEND TO AGENT
-    const launchRes = await fetch(`${agentBase}/launch-agent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        path,
-        sessionId,
-        windowName   // 🔥 KEY FIX
-      })
-    });
+ // 🔥 SEND TO AGENT
+const launchRes = await fetch(`${agentBase}/launch-agent`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    path,
+    sessionId,
+    windowName
+  })
+});
 
-    const data = await launchRes.json();
+// 🔥 SAFE PARSE (IMPORTANT)
+const text = await launchRes.text();
 
-    console.log("✅ Agent response:", data);
+let data;
 
-    return res.json(data);
+try {
+  data = JSON.parse(text);
+} catch (err) {
+  console.log("❌ Agent returned NON-JSON:");
+  console.log(text.slice(0, 200)); // log first part
+
+  return res.json({
+    success: false,
+    error: "Agent unreachable (tunnel delay)"
+  });
+}
+
+console.log("✅ Agent response:", data);
+
+return res.json(data);
 
   } catch (err) {
     console.log("❌ LAUNCH AGENT ERROR:", err);
