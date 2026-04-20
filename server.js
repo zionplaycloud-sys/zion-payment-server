@@ -578,7 +578,7 @@ app.post("/webhook", async (req, res) => {
     // =========================
     // 🎁 NEW USER BONUS (0.5 hr)
     // =========================
-  const totalHours = plan.hours + (isFirstPurchase ? 0.3 : 0);
+  const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
 
 const buyerCredit = await applyUserCredit(
   username,
