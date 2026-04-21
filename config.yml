@@ -1,0 +1,7 @@
+tunnel: game-agent
+credentials-file: C:\Users\NJ\.cloudflared\369d918b-7e10-4287-bef3-4cb5546dfecc.json
+
+ingress:
+  - hostname: agent.zionplayclould.in
+    service: http://localhost:3002
+  - service: http_status:404

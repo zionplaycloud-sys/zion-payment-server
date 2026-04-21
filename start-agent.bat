@@ -16,12 +16,6 @@ start "Agent Server" cmd /k "cd /d E:\zion-agent && node agent.js"
 timeout /t 3 >nul
 
 :: ================================
-:: 3. CLOUDFLARE TUNNEL (AFTER AGENT)
-:: ================================
-start "Cloudflare Tunnel" cmd /k "cloudflared-windows-amd64.exe tunnel --url http://localhost:3002"
-timeout /t 3 >nul
-
-:: ================================
 :: 4. ELECTRON AGENT UI
 :: ================================
 start "Agent UI" cmd /k "cd /d E:\zion-agent-ui && npm start"

@@ -924,12 +924,13 @@ return res.json(data);
   app.listen(PORT, () => {
     console.log("Server running on port " + PORT);
   });
-  // ================= ASSIGN-PC =================
+// ================= ASSIGN-PC =================
 app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
 
-    const agentBase = process.env.AGENT_URL;
+    // ❌ REMOVE THIS (NOT USED ANYMORE)
+    // const agentBase = process.env.AGENT_URL;
 
     // 🔁 Check if user already has PC
     const { data: existing } = await supabase
@@ -968,8 +969,8 @@ app.post("/assign-pc", async (req, res) => {
 
       console.log("🎮 Session created (existing):", sessionId);
 
-      // 🔥 SEND TO AGENT
-      await fetch(`${agentBase}/launch-agent`, {
+      // 🔥 SEND TO THAT SPECIFIC PC
+      await fetch(`${existing.agent_url}/launch-agent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1021,8 +1022,8 @@ app.post("/assign-pc", async (req, res) => {
 
     console.log("🎮 Session created:", sessionId);
 
-    // 🔥 SEND FULL DATA TO AGENT
-    await fetch(`${agentBase}/launch-agent`, {
+    // 🔥 SEND TO CORRECT AGENT (THIS IS THE FIX)
+    await fetch(`${pc.agent_url}/launch-agent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -1034,7 +1035,7 @@ app.post("/assign-pc", async (req, res) => {
       })
     });
 
-    console.log("✅ Session sent to agent");
+    console.log("✅ Session sent to agent:", pc.agent_url);
 
     // ✅ FINAL RESPONSE (ONLY ONCE)
     res.json({
