@@ -111,16 +111,7 @@ if (
       return;
     }
 
-    // ===============================
-    // 🎮 INPUT
-    // ===============================
-    if (data.type === "input") {
-      if (!data.sessionId) {
-        console.log("⚠️ input missing sessionId");
-        return;
-      }
-      sessions[data.sessionId]?.broadcaster?.send(JSON.stringify(data));
-    }
+    
   });
 
   // ===============================

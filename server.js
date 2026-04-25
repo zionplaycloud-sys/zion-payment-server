@@ -961,41 +961,63 @@ app.post("/assign-pc", async (req, res) => {
     console.log("🎯 Window target:", windowName);
 
     // 🔥 EXISTING PC CASE
-    if (existing) {
-      activeSessions[sessionId] = {
-        username,
-        pc: existing.name
-      };
+if (existing) {
+  activeSessions[sessionId] = {
+    username,
+    pc: existing.name
+  };
 
-      console.log("🎮 Session created (existing):", sessionId);
+  console.log("🎮 Session created (existing):", sessionId);
 
-      // 🔥 SEND TO THAT SPECIFIC PC
-      await fetch(`${existing.agent_url}/launch-agent`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          path: exePath,
-          sessionId,
-          windowName
-        })
-      });
-
-      return res.json({
-        success: true,
-        pc: existing.name,
+  try {
+    const existingAgentResponse = await fetch(`${existing.agent_url}/launch-agent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        path: exePath,
         sessionId,
-        streamBaseUrl
-      });
+        windowName
+      })
+    });
+
+    if (!existingAgentResponse.ok) {
+      throw new Error("Existing PC launch failed");
     }
+
+    return res.json({
+      success: true,
+      pc: existing.name,
+      sessionId,
+      streamBaseUrl
+    });
+
+  } catch (err) {
+    console.log("❌ Existing PC failed, releasing stale lock:", err);
+
+    // 🔓 Release broken existing lock
+    await supabase
+      .from("pcs")
+      .update({
+        status: "free",
+        current_user: null
+      })
+      .eq("id", existing.id);
+
+    delete activeSessions[sessionId];
+
+    // Continue flow → assign fresh PC
+  }
+}
 
     // 🔍 Find free PC
     const { data: pcs } = await supabase
       .from("pcs")
       .select("*")
       .eq("status", "free")
-      .limit(1);
+.order("id", { ascending: true })
+.limit(1);
 
     if (!pcs || pcs.length === 0) {
       return res.json({ success: false, error: "No PC available" });
@@ -1023,19 +1045,44 @@ app.post("/assign-pc", async (req, res) => {
     console.log("🎮 Session created:", sessionId);
 
     // 🔥 SEND TO CORRECT AGENT (THIS IS THE FIX)
-    await fetch(`${pc.agent_url}/launch-agent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        path: exePath,
-        sessionId,
-        windowName
-      })
-    });
+      try {
+      const agentResponse = await fetch(`${pc.agent_url}/launch-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          path: exePath,
+          sessionId,
+          windowName
+        })
+      });
 
-    console.log("✅ Session sent to agent:", pc.agent_url);
+      if (!agentResponse.ok) {
+        throw new Error("Agent launch failed");
+      }
+
+      console.log("✅ Session sent to agent:", pc.agent_url);
+
+    } catch (err) {
+      console.log("❌ Agent launch failed, releasing PC:", err);
+
+      // 🔓 AUTO RELEASE FAILED PC
+      await supabase
+        .from("pcs")
+        .update({
+          status: "free",
+          current_user: null
+        })
+        .eq("id", pc.id);
+
+      delete activeSessions[sessionId];
+
+      return res.json({
+        success: false,
+        error: "Agent unavailable. Please try again."
+      });
+    }
 
     // ✅ FINAL RESPONSE (ONLY ONCE)
     res.json({

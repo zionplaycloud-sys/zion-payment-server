@@ -15,6 +15,8 @@ timeout /t 2 >nul
 start "Agent Server" cmd /k "cd /d E:\zion-agent && node agent.js"
 timeout /t 3 >nul
 
+
+
 :: ================================
 :: 4. ELECTRON AGENT UI
 :: ================================
@@ -22,9 +24,10 @@ start "Agent UI" cmd /k "cd /d E:\zion-agent-ui && npm start"
 timeout /t 2 >nul
 
 :: ================================
-:: 5. CLIENT UI
+:: 5. ELECTRON AGENT UI
 :: ================================
-start "Client UI" cmd /k "cd /d E:\zion-client && npm start"
+start "client" cmd /k "cd /d E:\zion-client && npm start"
+timeout /t 2 >nul
+
 
 echo ✅ All systems started!
-pause
