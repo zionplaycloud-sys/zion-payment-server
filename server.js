@@ -393,6 +393,7 @@ loginAttempts[userKey] = {
 
 return res.json({
   success: true,
+  username: user.username,
   hrs: currentTime,
   pts: user.pts || 0,
   isAdmin: false,
@@ -618,8 +619,7 @@ app.post("/redeem-voucher", async (req, res) => {
     const { data: user, error: userError } = await supabase
       .from("users")
       .select("hours")
-      .eq("email", username)
-      .single();
+.eq("username", username)      .single();
 
     if (userError || !user) {
       return res.json({
@@ -636,7 +636,7 @@ app.post("/redeem-voucher", async (req, res) => {
       .update({
         hours: newHours
       })
-      .eq("email", username);
+.eq("username", username)
 
     // ✅ Mark voucher used
     await supabase
