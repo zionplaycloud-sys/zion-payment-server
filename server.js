@@ -1,4 +1,4 @@
-  import express from "express";
+﻿  import express from "express";
   import cors from "cors";
   import dotenv from "dotenv";
   import { createClient } from "@supabase/supabase-js";
@@ -24,7 +24,7 @@
     if (!session.createdAt) continue;
 
     if (now - session.createdAt > maxAge) {
-      console.log("🧹 Removing stale session:", sessionId);
+      console.log("ðŸ§¹ Removing stale session:", sessionId);
 
       delete activeSessions[sessionId];
     }
@@ -83,27 +83,201 @@ const app = express();
   }
 
   const SHOP_PLANS = [
-    { id: "p100", amount: 100, hours: 1, cashBackPts: 10 },
-    { id: "p199", amount: 199, hours: 3, cashBackPts: 19 },
-    { id: "p499", amount: 499, hours: 8, cashBackPts: 49, featured: true },
-    { id: "p999", amount: 999, hours: 20, cashBackPts: 99 },
-    { id: "p2499", amount: 2499, hours: 60, cashBackPts: 249 }
+    // Normal top-up plans
+    { id: "starter_1h", amount: 100, hours: 1, cashBackPts: 10, kind: "standard" },
+    { id: "gamer_3h", amount: 199, hours: 3, cashBackPts: 19, kind: "standard" },
+    { id: "popular_8h", amount: 499, hours: 8, cashBackPts: 49, featured: true, kind: "standard" },
+    { id: "pro_20h", amount: 999, hours: 20, cashBackPts: 99, kind: "standard" },
+    { id: "ultra_60h", amount: 2499, hours: 60, cashBackPts: 249, kind: "standard" },
+
+    // Validity passes
+    { id: "weekend_pass", amount: 799, hours: 16, cashBackPts: 79, validDays: 2, kind: "pass" },
+    { id: "pass_15d", amount: 1799, hours: 40, cashBackPts: 179, validDays: 15, kind: "pass" },
+    { id: "vip_pass", amount: 3999, hours: 100, cashBackPts: 399, validDays: 30, kind: "pass" },
+    { id: "pro_pass_90d", amount: 9999, hours: 350, cashBackPts: 999, validDays: 90, kind: "pass" },
+    { id: "elite_pass_180d", amount: 18999, hours: 800, cashBackPts: 1899, validDays: 180, kind: "pass" },
+    { id: "ultimate_pass_340d", amount: 34999, hours: 1800, cashBackPts: 3499, validDays: 340, kind: "pass" },
+
+    // Gift cards (creates voucher code for recipient/use later)
+    { id: "gift_1h", amount: 100, hours: 1, cashBackPts: 0, kind: "gift_card" },
+    { id: "gift_3h", amount: 199, hours: 3, cashBackPts: 0, kind: "gift_card" },
+    { id: "gift_8h", amount: 499, hours: 8, cashBackPts: 0, kind: "gift_card" },
+    { id: "gift_20h", amount: 999, hours: 20, cashBackPts: 0, kind: "gift_card" },
+    { id: "gift_60h", amount: 2499, hours: 60, cashBackPts: 0, kind: "gift_card" }
   ];
 
   const POINTS_MARKUP_MULTIPLIER = 1.3; // +30% points cost
 
-  function getPlanByAmount(rawAmount) {
+  function parseOrderAmount(rawAmount) {
     const amount = Number(String(rawAmount ?? "").replace(/[^\d.]/g, ""));
-    if (!Number.isFinite(amount) || amount <= 0) return null;
-    const rounded = Math.round(amount);
-    return SHOP_PLANS.find((p) => p.amount === rounded) || null;
+    if (!Number.isFinite(amount) || amount <= 0) return Number.NaN;
+    return Math.round(amount);
+  }
+
+  function resolvePlan(rawAmount, planId = "") {
+    const normalizedPlanId = (planId || "").toString().trim().toLowerCase();
+    if (normalizedPlanId) {
+      return SHOP_PLANS.find((p) => p.id === normalizedPlanId) || null;
+    }
+
+    const rounded = parseOrderAmount(rawAmount);
+    if (!Number.isFinite(rounded) || rounded <= 0) return null;
+    const matches = SHOP_PLANS.filter((p) => p.amount === rounded);
+    if (matches.length === 1) return matches[0];
+    return null;
+  }
+
+  function getPlanExpiryDate(plan) {
+    const days = Number(plan?.validDays || 0);
+    if (!Number.isFinite(days) || days <= 0) return null;
+    const expiresAt = new Date();
+    expiresAt.setUTCDate(expiresAt.getUTCDate() + days);
+    return expiresAt;
+  }
+
+  let hourGrantsTableChecked = false;
+  let hourGrantsTableReady = false;
+
+  async function isHourGrantsTableReady() {
+    if (hourGrantsTableChecked) {
+      return hourGrantsTableReady;
+    }
+
+    const { error } = await supabase
+      .from("user_hour_grants")
+      .select("id")
+      .limit(1);
+
+    hourGrantsTableChecked = true;
+    hourGrantsTableReady = !error;
+
+    if (error) {
+      console.log("âš  user_hour_grants table not available. Expiry tracking disabled.");
+    }
+
+    return hourGrantsTableReady;
+  }
+
+  async function addHourGrantRecord(username, totalHours, expiresAt, sourceType, sourceId) {
+    const hours = Number(totalHours || 0);
+    if (!hours || hours <= 0) return;
+
+    if (!(await isHourGrantsTableReady())) {
+      return;
+    }
+
+    const payload = {
+      username,
+      source_type: sourceType || "topup",
+      source_id: sourceId || "",
+      total_hours: hours,
+      remaining_hours: hours,
+      expires_at: expiresAt ? new Date(expiresAt).toISOString() : null
+    };
+
+    const { error } = await supabase.from("user_hour_grants").insert(payload);
+    if (error) {
+      console.log("HOUR GRANT INSERT ERROR:", error.message || error);
+    }
+  }
+
+  async function consumeHourGrants(username, consumedHours) {
+    const amount = Number(consumedHours || 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!(await isHourGrantsTableReady())) return;
+
+    let remainingToConsume = amount;
+    const { data: grants, error } = await supabase
+      .from("user_hour_grants")
+      .select("id, remaining_hours")
+      .eq("username", username)
+      .gt("remaining_hours", 0)
+      .order("expires_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true });
+
+    if (error || !Array.isArray(grants)) return;
+
+    for (const grant of grants) {
+      if (remainingToConsume <= 0) break;
+      const current = Number(grant.remaining_hours || 0);
+      if (current <= 0) continue;
+      const next = Math.max(0, current - remainingToConsume);
+      const usedHere = current - next;
+      remainingToConsume -= usedHere;
+
+      await supabase
+        .from("user_hour_grants")
+        .update({ remaining_hours: next })
+        .eq("id", grant.id);
+    }
+  }
+
+  async function expireUserHours(username) {
+    if (!(await isHourGrantsTableReady())) {
+      return { expiredHours: 0 };
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data: expiredGrants, error } = await supabase
+      .from("user_hour_grants")
+      .select("id, remaining_hours")
+      .eq("username", username)
+      .gt("remaining_hours", 0)
+      .lte("expires_at", nowIso);
+
+    if (error || !Array.isArray(expiredGrants) || expiredGrants.length === 0) {
+      return { expiredHours: 0 };
+    }
+
+    const expiredHours = expiredGrants.reduce(
+      (sum, row) => sum + Number(row.remaining_hours || 0),
+      0
+    );
+
+    const ids = expiredGrants.map((x) => x.id);
+    await supabase
+      .from("user_hour_grants")
+      .update({ remaining_hours: 0 })
+      .in("id", ids);
+
+    if (expiredHours > 0) {
+      const { data: session } = await supabase
+        .from("sessions")
+        .select("time_left")
+        .eq("username", username)
+        .maybeSingle();
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("hours")
+        .eq("username", username)
+        .maybeSingle();
+
+      const nextTimeLeft = Math.max(0, Number(session?.time_left || 0) - expiredHours);
+      const nextHours = Math.max(0, Number(user?.hours || 0) - expiredHours);
+
+      await supabase
+        .from("sessions")
+        .upsert({
+          username,
+          time_left: nextTimeLeft,
+          updated_at: new Date()
+        });
+
+      await supabase
+        .from("users")
+        .update({ hours: nextHours })
+        .eq("username", username);
+    }
+
+    return { expiredHours };
   }
 
   function pointsCostForPlan(plan) {
     return Math.ceil(plan.amount * POINTS_MARKUP_MULTIPLIER);
   }
 
-  async function applyUserCredit(username, addHours = 0, addPts = 0) {
+  async function applyUserCredit(username, addHours = 0, addPts = 0, options = {}) {
     const { data: user, error: userErr } = await supabase
       .from("users")
       .select("*")
@@ -145,6 +319,16 @@ const newTime = currentTime + Number(addHours || 0);
 
     if (sessionError) {
       return { success: false, error: sessionError.message || "Failed to update session" };
+    }
+
+    if (Number(addHours || 0) > 0) {
+      await addHourGrantRecord(
+        username,
+        Number(addHours || 0),
+        options.expiresAt || null,
+        options.sourceType || "topup",
+        options.sourceId || ""
+      );
     }
 
     return { success: true, hours: newHours, pts: newPts, timeLeft: newTime };
@@ -214,7 +398,7 @@ const newTime = currentTime + Number(addHours || 0);
 
   // ================= ROOT =================
   app.get("/", (req, res) => {
-    res.send("Server running 🚀");
+    res.send("Server running ðŸš€");
   });
 
   // ================= SIGNUP =================
@@ -251,7 +435,7 @@ app.post("/signup", async (req, res) => {
       referredBy = refUser.username;
     }
 
-    // 🔥 HASH PASSWORD
+    // ðŸ”¥ HASH PASSWORD
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const ownReferralCode = await generateUniqueReferralCode();
@@ -366,7 +550,7 @@ if (!user.referral_code) {
   }
 }
 
-// 🔥 SESSION CHECK (MOVE HERE)
+// ðŸ”¥ SESSION CHECK (MOVE HERE)
 const { data: session } = await supabase
   .from("sessions")
   .select("*")
@@ -385,6 +569,16 @@ if (session) {
   });
 
   currentTime = user.hours || 0;
+}
+
+const expiryResult = await expireUserHours(email);
+if (expiryResult.expiredHours > 0) {
+  const { data: refreshedSession } = await supabase
+    .from("sessions")
+    .select("time_left")
+    .eq("username", email)
+    .maybeSingle();
+  currentTime = Number(refreshedSession?.time_left || 0);
 }
 loginAttempts[userKey] = {
   count: 0,
@@ -434,14 +628,21 @@ return res.json({
 
   app.post("/buy-with-points", async (req, res) => {
     try {
-      const { username, amount } = req.body || {};
+      const { username, amount, planId } = req.body || {};
       if (!username) {
         return res.json({ success: false, error: "Username required" });
       }
 
-      const plan = getPlanByAmount(amount);
+      const plan = resolvePlan(amount, planId);
       if (!plan) {
-        return res.json({ success: false, error: "Invalid plan amount" });
+        return res.json({ success: false, error: "Invalid plan selection" });
+      }
+
+      if (plan.kind === "gift_card") {
+        return res.json({
+          success: false,
+          error: "Gift cards can be purchased only with cash"
+        });
       }
 
       const { data: user } = await supabase
@@ -465,7 +666,12 @@ return res.json({
         });
       }
 
-      const credit = await applyUserCredit(username, plan.hours, -requiredPoints);
+      const credit = await applyUserCredit(username, plan.hours, -requiredPoints, {
+        expiresAt: getPlanExpiryDate(plan),
+        sourceType: "points_purchase",
+        sourceId: plan.id
+      });
+
       if (!credit.success) {
         return res.json({ success: false, error: credit.error || "Purchase failed" });
       }
@@ -473,8 +679,10 @@ return res.json({
       return res.json({
         success: true,
         mode: "points",
+        planId: plan.id,
         planAmount: plan.amount,
         hoursAdded: plan.hours,
+        validDays: plan.validDays || 0,
         pointsSpent: requiredPoints,
         pts: credit.pts,
         hrs: credit.hours,
@@ -486,225 +694,188 @@ return res.json({
     }
   });
 
-// ================= ADMIN ADD =================
+  // ================= ADMIN ADD =================
   app.post("/admin-add", async (req, res) => {
     try {
-      const { email, hrs, pts } = req.body;
+      const { email, hrs, pts } = req.body || {};
+      if (!email) return res.json({ success: false });
 
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("username", email)
-        .maybeSingle();
+      const credit = await applyUserCredit(
+        email,
+        Number(hrs || 0),
+        Number(pts || 0),
+        {
+          sourceType: "admin_add",
+          sourceId: "admin"
+        }
+      );
 
-      if (!user) return res.json({ success: false });
-
-      await supabase
-        .from("users")
-        .update({
-          hours: (user.hours || 0) + hrs,
-          pts: (user.pts || 0) + pts
-        })
-        .eq("username", email);
+      if (!credit.success) {
+        return res.json({ success: false, error: credit.error || "Failed to add" });
+      }
 
       res.json({ success: true });
-
-    } catch {
+    } catch (err) {
+      console.log("ADMIN ADD ERROR:", err);
       res.json({ success: false });
     }
   });
- 
+
   // ================= TOGGLE MAINTENANCE =================
-app.post("/toggle-maintenance", async (req, res) => {
-  try {
-    const { enabled } = req.body;
+  app.post("/toggle-maintenance", async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      maintenanceMode = !!enabled;
 
-    maintenanceMode = !!enabled;
-
-    console.log("🛠 Maintenance Mode:", maintenanceMode);
-
-    res.json({
-      success: true,
-      maintenanceMode
-    });
-
-  } catch (err) {
-    console.log("TOGGLE MAINTENANCE ERROR:", err);
-
-    res.json({
-      success: false
-    });
-  }
-});
-
-  // ================= generate vouchers =================
-
-app.post("/generate-vouchers", async (req, res) => {
-  try {
-    const voucherList = [];
-
-    for (let i = 0; i < 10; i++) {
-      voucherList.push({
-        code: generateVoucherCode(),
-        hours: 1,
-        created_by: "admin",
-        used: false
+      console.log("Maintenance Mode:", maintenanceMode);
+      res.json({
+        success: true,
+        maintenanceMode
       });
+    } catch (err) {
+      console.log("TOGGLE MAINTENANCE ERROR:", err);
+      res.json({ success: false });
     }
+  });
 
-    const { error } = await supabase
-      .from("vouchers")
-      .insert(voucherList);
+  // ================= GENERATE VOUCHERS =================
+  app.post("/generate-vouchers", async (req, res) => {
+    try {
+      const voucherList = [];
 
-    if (error) {
-      console.log("VOUCHER GENERATION ERROR:", error);
+      for (let i = 0; i < 10; i++) {
+        voucherList.push({
+          code: generateVoucherCode(),
+          hours: 1,
+          created_by: "admin",
+          used: false
+        });
+      }
 
-      return res.json({
-        success: false,
-        error: error.message
+      const { error } = await supabase
+        .from("vouchers")
+        .insert(voucherList);
+
+      if (error) {
+        console.log("VOUCHER GENERATION ERROR:", error);
+        return res.json({ success: false, error: error.message });
+      }
+
+      res.json({ success: true, count: 10 });
+    } catch (err) {
+      console.log("GENERATE VOUCHERS ERROR:", err);
+      res.json({ success: false });
+    }
+  });
+
+  // ================= REDEEM VOUCHER =================
+  app.post("/redeem-voucher", async (req, res) => {
+    try {
+      const { username, code } = req.body || {};
+      if (!username || !code) {
+        return res.json({ success: false, error: "Missing fields" });
+      }
+
+      const cleanCode = code.trim().toUpperCase();
+
+      const { data: voucher, error: fetchError } = await supabase
+        .from("vouchers")
+        .select("*")
+        .eq("code", cleanCode)
+        .single();
+
+      if (fetchError || !voucher) {
+        return res.json({ success: false, error: "Invalid voucher code" });
+      }
+
+      if (voucher.used) {
+        return res.json({ success: false, error: "Voucher already used" });
+      }
+
+      const credit = await applyUserCredit(
+        username,
+        Number(voucher.hours || 0),
+        0,
+        {
+          sourceType: "voucher",
+          sourceId: cleanCode
+        }
+      );
+
+      if (!credit.success) {
+        return res.json({ success: false, error: credit.error || "Failed to apply voucher" });
+      }
+
+      await supabase
+        .from("vouchers")
+        .update({
+          used: true,
+          used_by: username
+        })
+        .eq("code", cleanCode);
+
+      res.json({
+        success: true,
+        addedHours: Number(voucher.hours || 0),
+        totalHours: credit.timeLeft
       });
+    } catch (err) {
+      console.log("REDEEM VOUCHER ERROR:", err);
+      res.json({ success: false, error: "Server error" });
     }
+  });
 
-    res.json({
-      success: true,
-      count: 10
-    });
-
-  } catch (err) {
-    console.log("GENERATE VOUCHERS ERROR:", err);
-
-    res.json({
-      success: false
-    });
-  }
-});
-
-  // ================= redeem-voucher =================
-
-app.post("/redeem-voucher", async (req, res) => {
-  try {
-    const { username, code } = req.body;
-
-    if (!username || !code) {
-      return res.json({
-        success: false,
-        error: "Missing fields"
-      });
-    }
-
-    const cleanCode = code.trim().toUpperCase();
-
-    // 🔍 Find voucher
-    const { data: voucher, error: fetchError } = await supabase
-      .from("vouchers")
-      .select("*")
-      .eq("code", cleanCode)
-      .single();
-
-    if (fetchError || !voucher) {
-      return res.json({
-        success: false,
-        error: "Invalid voucher code"
-      });
-    }
-
-    if (voucher.used) {
-      return res.json({
-        success: false,
-        error: "Voucher already used"
-      });
-    }
-
-    // 👤 Get current user
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("hours")
-      .eq("username", username)
-      .single();
-
-    if (userError || !user) {
-      return res.json({
-        success: false,
-        error: "User not found"
-      });
-    }
-
-    const newHours = Number(user.hours || 0) + Number(voucher.hours || 0);
-
-    // ➕ Update users table
-    await supabase
-      .from("users")
-      .update({
-        hours: newHours
-      })
-      .eq("username", username);
-
-    // ➕ Update sessions table (VERY IMPORTANT)
-    await supabase
-      .from("sessions")
-      .update({
-        time_left: newHours,
-        updated_at: new Date()
-      })
-      .eq("username", username);
-
-    // ✅ Mark voucher used
-    await supabase
-      .from("vouchers")
-      .update({
-        used: true,
-        used_by: username
-      })
-      .eq("code", cleanCode);
-
-    res.json({
-      success: true,
-      addedHours: voucher.hours,
-      totalHours: newHours
-    });
-
-  } catch (err) {
-    console.log("REDEEM VOUCHER ERROR:", err);
-
-    res.json({
-      success: false,
-      error: "Server error"
-    });
-  }
-});
   // ================= SYSTEM STATE =================
-
-  // GET SYSTEM STATE
   app.get("/get-system-state", async (req, res) => {
     try {
       const { data } = await supabase.from("sessions").select("*");
-
       let state = {};
 
-      data.forEach(row => {
+      for (const row of data || []) {
+        await expireUserHours(row.username);
+      }
+
+      const { data: refreshed } = await supabase.from("sessions").select("*");
+      (refreshed || []).forEach((row) => {
         state[row.username] = {
           timeLeft: row.time_left
         };
       });
 
       res.json({ success: true, state });
-
-    } catch {
+    } catch (err) {
+      console.log("GET SYSTEM STATE ERROR:", err);
       res.json({ success: false });
     }
   });
 
-  // 🔥 FIXED UPDATE SYSTEM STATE
   app.post("/update-system-state", async (req, res) => {
     try {
       const state = req.body.state;
-
-      // 🔥 Extract dynamic key
-      const email = Object.keys(state)[0];
-      const timeLeft = state[email].timeLeft;
+      const email = Object.keys(state || {})[0];
+      const timeLeft = state?.[email]?.timeLeft;
 
       if (!email) {
         return res.json({ success: false });
+      }
+
+      await expireUserHours(email);
+
+      const { data: existingSession } = await supabase
+        .from("sessions")
+        .select("time_left")
+        .eq("username", email)
+        .maybeSingle();
+
+      const previousTimeLeft = Number(existingSession?.time_left || 0);
+      const nextTimeLeft = Number(timeLeft || 0);
+
+      if (
+        Number.isFinite(previousTimeLeft) &&
+        Number.isFinite(nextTimeLeft) &&
+        previousTimeLeft > nextTimeLeft
+      ) {
+        await consumeHourGrants(email, previousTimeLeft - nextTimeLeft);
       }
 
       await supabase
@@ -715,146 +886,137 @@ app.post("/redeem-voucher", async (req, res) => {
           updated_at: new Date()
         });
 
-      console.log("Saved:", email, timeLeft);
-
       res.json({ success: true });
-
     } catch (err) {
-      console.log("ERROR:", err);
+      console.log("UPDATE SYSTEM STATE ERROR:", err);
       res.json({ success: false });
     }
   });
 
   // ================= WEBHOOK =================
-app.post("/webhook", async (req, res) => {
-  try {
-    const data = req.body;
+  app.post("/webhook", async (req, res) => {
+    try {
+      const data = req.body;
 
-    console.log("🔥 Cashfree webhook received:");
-    console.log(JSON.stringify(data, null, 2));
+      console.log("Cashfree webhook received:");
+      console.log(JSON.stringify(data, null, 2));
 
-    const payment = data.data?.payment;
-    const order = data.data?.order;
+      const payment = data.data?.payment;
+      const order = data.data?.order;
 
-    // =========================
-    // ✅ ONLY PROCESS SUCCESS
-    // =========================
-    if (payment?.payment_status !== "SUCCESS") {
-      console.log("⚠️ Not a success payment");
-      return res.sendStatus(200);
-    }
-
-    const orderId = order?.order_id;
-    const amount = Number(order?.order_amount);
-    const username = order?.order_tags?.username;
-
-    if (!orderId || !username || !amount) {
-      console.log("❌ Missing data");
-      return res.sendStatus(400);
-    }
-
-    // =========================
-    // 🚫 PREVENT DUPLICATE WEBHOOK
-    // =========================
-    const { data: existing } = await supabase
-      .from("payments")
-      .select("*")
-      .eq("order_id", orderId)
-      .maybeSingle();
-
-    if (existing) {
-      console.log("⚠️ Duplicate webhook ignored");
-      return res.sendStatus(200);
-    }
-
-    // Save payment (mark processed)
-    await supabase.from("payments").insert({
-      order_id: orderId,
-      username: username,
-      amount: amount
-    });
-
-    const plan = getPlanByAmount(amount);
-
-    if (!plan) {
-      console.log("❌ Invalid plan");
-      return res.sendStatus(400);
-    }
-
-    // =========================
-    // 🔥 GET USER BEFORE CREDIT
-    // =========================
-    const { data: userBefore } = await supabase
-      .from("users")
-      .select("hours")
-      .eq("username", username)
-      .maybeSingle();
-
-    // =========================
-    // 🎯 FIRST PURCHASE CHECK
-    // =========================
-    const isFirstPurchase = !userBefore || Number(userBefore.hours || 0) === 0;
-
-    console.log("🧠 First purchase check:", {
-  userBefore,
-  isFirstPurchase
-});
-
-    // =========================
-    // 🎁 NEW USER BONUS (0.5 hr)
-    // =========================
-  const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
-
-const buyerCredit = await applyUserCredit(
-  username,
-  totalHours,
-  plan.cashBackPts
-);
-
-if (!buyerCredit.success) {
-  console.log("❌ Buyer credit failed:", buyerCredit.error);
-  return res.sendStatus(500);
-}
-
-    // =========================
-    // 🎁 REFERRAL BONUS (POINTS ONLY)
-    // =========================
-    const { data: buyer } = await supabase
-      .from("users")
-      .select("referred_by")
-      .eq("username", username)
-      .maybeSingle();
-
-    const referrer = buyer?.referred_by;
-
-    if (referrer && isFirstPurchase) {
-      const referralPts = Math.floor(plan.amount * 0.2);
-
-      const referralCredit = await applyUserCredit(referrer, 0, referralPts);
-
-      if (referralCredit.success) {
-        console.log("🎁 Referral points applied:", referrer, referralPts);
-      } else {
-        console.log("⚠️ Referral failed:", referralCredit.error);
+      if (payment?.payment_status !== "SUCCESS") {
+        console.log("Not a success payment");
+        return res.sendStatus(200);
       }
+
+      const orderId = order?.order_id;
+      const amount = Number(order?.order_amount);
+      const planId = order?.order_tags?.planId || "";
+      const username = order?.order_tags?.username;
+
+      if (!orderId || !username || !amount) {
+        console.log("Missing data");
+        return res.sendStatus(400);
+      }
+
+      const { data: existing } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("order_id", orderId)
+        .maybeSingle();
+
+      if (existing) {
+        console.log("Duplicate webhook ignored");
+        return res.sendStatus(200);
+      }
+
+      await supabase.from("payments").insert({
+        order_id: orderId,
+        username,
+        amount
+      });
+
+      const plan = resolvePlan(amount, planId);
+      if (!plan) {
+        console.log("Invalid plan");
+        return res.sendStatus(400);
+      }
+
+      if (plan.kind === "gift_card") {
+        const code = generateVoucherCode();
+        const { error: voucherError } = await supabase
+          .from("vouchers")
+          .insert({
+            code,
+            hours: plan.hours,
+            created_by: username,
+            used: false
+          });
+
+        if (voucherError) {
+          console.log("GIFT VOUCHER CREATE ERROR:", voucherError);
+          return res.sendStatus(500);
+        }
+
+        console.log("Gift voucher created:", { username, planId: plan.id, code });
+        return res.sendStatus(200);
+      }
+
+      const { data: userBefore } = await supabase
+        .from("users")
+        .select("hours")
+        .eq("username", username)
+        .maybeSingle();
+
+      const isFirstPurchase = !userBefore || Number(userBefore.hours || 0) === 0;
+      const totalHours = plan.hours + (isFirstPurchase ? 0.5 : 0);
+
+      const buyerCredit = await applyUserCredit(
+        username,
+        totalHours,
+        plan.cashBackPts,
+        {
+          expiresAt: getPlanExpiryDate(plan),
+          sourceType: "cash_purchase",
+          sourceId: plan.id
+        }
+      );
+
+      if (!buyerCredit.success) {
+        console.log("Buyer credit failed:", buyerCredit.error);
+        return res.sendStatus(500);
+      }
+
+      const { data: buyer } = await supabase
+        .from("users")
+        .select("referred_by")
+        .eq("username", username)
+        .maybeSingle();
+
+      const referrer = buyer?.referred_by;
+      if (referrer && isFirstPurchase) {
+        const referralPts = Math.floor(plan.amount * 0.2);
+        const referralCredit = await applyUserCredit(referrer, 0, referralPts);
+
+        if (referralCredit.success) {
+          console.log("Referral points applied:", referrer, referralPts);
+        } else {
+          console.log("Referral failed:", referralCredit.error);
+        }
+      }
+
+      console.log("Purchase success:", username, {
+        planId: plan.id,
+        hours: plan.hours,
+        cashbackPts: plan.cashBackPts
+      });
+
+      res.sendStatus(200);
+    } catch (err) {
+      console.log("Webhook error:", err);
+      res.sendStatus(500);
     }
-
-   // =========================
-// ✅ FINAL LOG
-// =========================
-console.log("🔥 SUCCESS:", username, {
-  hours: plan.hours,
-  cashbackPts: plan.cashBackPts
-});
-
-res.sendStatus(200);
-
-} catch (err) {
-  console.log("❌ Webhook error:", err);
-  res.sendStatus(500);
-}
-});
-
+  });
 // ================= CREATE ORDER =================
 app.post("/create-order", async (req, res) => {
   try {
@@ -866,7 +1028,7 @@ app.post("/create-order", async (req, res) => {
       });
     }
 
-    const { amount, username, paymentEmail, paymentPhone } = req.body;
+    const { amount, username, paymentEmail, paymentPhone, planId } = req.body;
 
     if (paymentLocks[username]) {
       return res.json({
@@ -877,7 +1039,7 @@ app.post("/create-order", async (req, res) => {
 
     paymentLocks[username] = true;
 
-    const plan = getPlanByAmount(amount);
+    const plan = resolvePlan(amount, planId);
     const orderAmount = plan?.amount || Number.NaN;
     const loginEmail = sanitizeEmail(username);
 
@@ -887,6 +1049,7 @@ app.post("/create-order", async (req, res) => {
         error: "Invalid order payload",
         details: {
           usernamePresent: Boolean(username),
+          planId: planId || "",
           amountRaw: amount,
           amountParsed: Number.isFinite(orderAmount) ? orderAmount : null
         }
@@ -935,13 +1098,13 @@ app.post("/create-order", async (req, res) => {
 
 const orderId = "order_" + Date.now();
 
-// 🔥 AUTO SWITCH (SANDBOX / PRODUCTION)
+// ðŸ”¥ AUTO SWITCH (SANDBOX / PRODUCTION)
 const CASHFREE_BASE_URL =
   process.env.CASHFREE_MODE === "sandbox"
     ? "https://sandbox.cashfree.com/pg"
     : "https://api.cashfree.com/pg";
 
-console.log("🌐 Using Cashfree URL:", CASHFREE_BASE_URL);
+console.log("ðŸŒ Using Cashfree URL:", CASHFREE_BASE_URL);
 
 const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
   method: "POST",
@@ -956,7 +1119,8 @@ const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
     order_amount: orderAmount,
     order_currency: "INR",
     order_tags: {
-      username
+      username,
+      planId: plan.id
     },
     customer_details: {
       customer_id: customerId,
@@ -968,17 +1132,17 @@ const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
 
 const data = await response.json();
 
-// 🔴 ERROR HANDLING
+// ðŸ”´ ERROR HANDLING
 if (!response.ok) {
-  console.log("❌ Cashfree error response:", data);
+  console.log("âŒ Cashfree error response:", data);
   return res.json({
     success: false,
     error: data?.message || data?.error?.message || "Cashfree order failed"
   });
 }
 
-// ✅ SUCCESS LOG
-console.log("✅ Cashfree FULL response:", data);
+// âœ… SUCCESS LOG
+console.log("âœ… Cashfree FULL response:", data);
 
 delete paymentLocks[username];
 
@@ -1018,7 +1182,7 @@ res.json({
           totalHours += user.hours || 0;
           totalPoints += user.pts || 0;
           totalOrders += 1;
-          // Rough estimate: ₹100 per hour
+          // Rough estimate: â‚¹100 per hour
           totalRevenue += (user.hours || 0) * 100;
         });
       }
@@ -1070,13 +1234,13 @@ app.post("/launch-agent", async (req, res) => {
     const { path, sessionId, windowName: requestedWindowName, game: requestedGameName } = req.body;
 
     if (!path || !sessionId) {
-      console.log("❌ Missing path or sessionId");
+      console.log("âŒ Missing path or sessionId");
       return res.json({ success: false });
     }
 
-    console.log("🚀 Launch-agent request:", { path, sessionId });
+    console.log("ðŸš€ Launch-agent request:", { path, sessionId });
 
-    // 🔥 GET GAME FROM DB (to get window_name)
+    // ðŸ”¥ GET GAME FROM DB (to get window_name)
     const { data: game, error } = await supabase
       .from("games")
       .select("*")
@@ -1084,12 +1248,12 @@ app.post("/launch-agent", async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.log("❌ DB error:", error);
+      console.log("âŒ DB error:", error);
       return res.json({ success: false });
     }
 
     if (!game) {
-      console.log("⚠️ Game not found for path:", path);
+      console.log("âš ï¸ Game not found for path:", path);
     }
 
     const windowName =
@@ -1098,14 +1262,14 @@ app.post("/launch-agent", async (req, res) => {
       requestedGameName ||
       "";
 
-    console.log("🎯 Window target:", windowName);
+    console.log("ðŸŽ¯ Window target:", windowName);
 
-    // ⚠️ Safety log (important for debugging)
+    // âš ï¸ Safety log (important for debugging)
     if (!windowName) {
-      console.log("⚠️ window_name missing → may capture full screen");
+      console.log("âš ï¸ window_name missing â†’ may capture full screen");
     }
 
- // 🔥 SEND TO AGENT
+ // ðŸ”¥ SEND TO AGENT
 const launchRes = await fetch(`${agentBase}/launch-agent`, {
   method: "POST",
   headers: {
@@ -1118,7 +1282,7 @@ const launchRes = await fetch(`${agentBase}/launch-agent`, {
   })
 });
 
-// 🔥 SAFE PARSE (IMPORTANT)
+// ðŸ”¥ SAFE PARSE (IMPORTANT)
 const text = await launchRes.text();
 
 let data;
@@ -1126,7 +1290,7 @@ let data;
 try {
   data = JSON.parse(text);
 } catch (err) {
-  console.log("❌ Agent returned NON-JSON:");
+  console.log("âŒ Agent returned NON-JSON:");
   console.log(text.slice(0, 200)); // log first part
 
   return res.json({
@@ -1135,12 +1299,12 @@ try {
   });
 }
 
-console.log("✅ Agent response:", data);
+console.log("âœ… Agent response:", data);
 
 return res.json(data);
 
   } catch (err) {
-    console.log("❌ LAUNCH AGENT ERROR:", err);
+    console.log("âŒ LAUNCH AGENT ERROR:", err);
     return res.json({ success: false });
   }
 });
@@ -1154,7 +1318,7 @@ return res.json(data);
         return res.json({ success: false, error: "Process name required" });
       }
 
-      // 🔥 WINDOWS: Kill process by name
+      // ðŸ”¥ WINDOWS: Kill process by name
       exec(`taskkill /IM ${processName}.exe /F`, (error, stdout, stderr) => {
         if (error) {
           console.log("Process kill message:", stderr);
@@ -1182,7 +1346,7 @@ app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
 
-    // 🔥 MAINTENANCE CHECK MUST BE FIRST
+    // ðŸ”¥ MAINTENANCE CHECK MUST BE FIRST
     if (maintenanceMode) {
       return res.json({
         success: false,
@@ -1197,7 +1361,7 @@ app.post("/assign-pc", async (req, res) => {
     if (existingSession) {
       const [existingSessionId, sessionData] = existingSession;
 
-      console.log("♻️ Reconnecting existing session:", existingSessionId);
+      console.log("â™»ï¸ Reconnecting existing session:", existingSessionId);
 
       return res.json({
         success: true,
@@ -1231,20 +1395,20 @@ app.post("/assign-pc", async (req, res) => {
   createdAt: Date.now()
 };
 
-    // ❌ REMOVE THIS (NOT USED ANYMORE)
+    // âŒ REMOVE THIS (NOT USED ANYMORE)
     // const agentBase = process.env.AGENT_URL;
 
-    // 🔁 Check if user already has PC
+    // ðŸ” Check if user already has PC
     const { data: existing } = await supabase
       .from("pcs")
       .select("*")
       .eq("current_user", username)
       .maybeSingle();
 
-    // 🔥 ALWAYS CREATE NEW SESSION
+    // ðŸ”¥ ALWAYS CREATE NEW SESSION
     const sessionId = uuidv4();
 
-    // 🔥 GET GAME DATA (IMPORTANT)
+    // ðŸ”¥ GET GAME DATA (IMPORTANT)
     const { data: gameData, error: gameError } = await supabase
       .from("games")
       .select("*")
@@ -1252,7 +1416,7 @@ app.post("/assign-pc", async (req, res) => {
       .single();
 
     if (gameError || !gameData) {
-      console.log("❌ Game not found");
+      console.log("âŒ Game not found");
         delete launchLocks[username];
 
       return res.json({ success: false, error: "Game not found" });
@@ -1261,17 +1425,17 @@ app.post("/assign-pc", async (req, res) => {
     const exePath = gameData.exe_path;
     const windowName = gameData.window_name;
 
-    console.log("🎯 Game selected:", gameData.name);
-    console.log("🎯 Window target:", windowName);
+    console.log("ðŸŽ¯ Game selected:", gameData.name);
+    console.log("ðŸŽ¯ Window target:", windowName);
 
-    // 🔥 EXISTING PC CASE
+    // ðŸ”¥ EXISTING PC CASE
 if (existing) {
 activeSessions[sessionId] = {
   username,
   pc: existing.name,
   createdAt: Date.now()
 };
-  console.log("🎮 Session created (existing):", sessionId);
+  console.log("ðŸŽ® Session created (existing):", sessionId);
 
   try {
     const existingAgentResponse = await fetch(`${existing.agent_url}/launch-agent`, {
@@ -1298,9 +1462,9 @@ delete launchLocks[username];
     });
 
   } catch (err) {
-    console.log("❌ Existing PC failed, releasing stale lock:", err);
+    console.log("âŒ Existing PC failed, releasing stale lock:", err);
 
-    // 🔓 Release broken existing lock
+    // ðŸ”“ Release broken existing lock
     await supabase
       .from("pcs")
       .update({
@@ -1311,11 +1475,11 @@ delete launchLocks[username];
 
     delete activeSessions[sessionId];
 
-    // Continue flow → assign fresh PC
+    // Continue flow â†’ assign fresh PC
   }
 }
 
-    // 🔍 Find free PC
+    // ðŸ” Find free PC
     const { data: pcs } = await supabase
       .from("pcs")
       .select("*")
@@ -1331,7 +1495,7 @@ delete launchLocks[username];
 
     const pc = pcs[0];
 
-    // 🔒 Mark busy
+    // ðŸ”’ Mark busy
     await supabase
       .from("pcs")
       .update({
@@ -1342,15 +1506,15 @@ delete launchLocks[username];
 
     console.log(`Assigned ${pc.name} to ${username}`);
 
-    // 🔥 STORE SESSION
+    // ðŸ”¥ STORE SESSION
 activeSessions[sessionId] = {
   username,
   pc: pc.name,
   createdAt: Date.now()
 };
-    console.log("🎮 Session created:", sessionId);
+    console.log("ðŸŽ® Session created:", sessionId);
 
-    // 🔥 SEND TO CORRECT AGENT (THIS IS THE FIX)
+    // ðŸ”¥ SEND TO CORRECT AGENT (THIS IS THE FIX)
       try {
       const agentResponse = await fetch(`${pc.agent_url}/launch-agent`, {
         method: "POST",
@@ -1368,12 +1532,12 @@ activeSessions[sessionId] = {
         throw new Error("Agent launch failed");
       }
 
-      console.log("✅ Session sent to agent:", pc.agent_url);
+      console.log("âœ… Session sent to agent:", pc.agent_url);
 
     } catch (err) {
-      console.log("❌ Agent launch failed, releasing PC:", err);
+      console.log("âŒ Agent launch failed, releasing PC:", err);
 
-      // 🔓 AUTO RELEASE FAILED PC
+      // ðŸ”“ AUTO RELEASE FAILED PC
       await supabase
         .from("pcs")
         .update({
@@ -1390,7 +1554,7 @@ delete launchLocks[username];
       });
     }
 
-    // ✅ FINAL RESPONSE (ONLY ONCE)
+    // âœ… FINAL RESPONSE (ONLY ONCE)
     delete launchLocks[username];
 
     res.json({
@@ -1448,7 +1612,7 @@ app.post("/release-pc", async (req, res) => {
   try {
     const { username } = req.body;
 
-    // 🔓 Free PC in database
+    // ðŸ”“ Free PC in database
     await supabase
       .from("pcs")
       .update({
@@ -1457,15 +1621,15 @@ app.post("/release-pc", async (req, res) => {
       })
       .eq("current_user", username);
 
-    // 🧹 Remove old active session from memory
+    // ðŸ§¹ Remove old active session from memory
     for (const sessionId in activeSessions) {
       if (activeSessions[sessionId].username === username) {
-        console.log("🧹 Removing old session:", sessionId);
+        console.log("ðŸ§¹ Removing old session:", sessionId);
         delete activeSessions[sessionId];
       }
     }
 
-    // 🗑 Remove old session row from sessions table
+    // ðŸ—‘ Remove old session row from sessions table
 await supabase
   .from("sessions")
   .update({
@@ -1473,7 +1637,7 @@ await supabase
   })
   .eq("username", username);
 
-    // 🔓 Remove launch lock too
+    // ðŸ”“ Remove launch lock too
     delete launchLocks[username];
 
     res.json({
@@ -1495,17 +1659,17 @@ await supabase
     try {
       const { games } = req.body;
 
-      // 🔥 Delete old games
+      // ðŸ”¥ Delete old games
       await supabase.from("games").delete().neq("id", "");
 
-      // 🔥 Insert new games
+      // ðŸ”¥ Insert new games
       const { error } = await supabase.from("games").insert(
        games.map(g => ({
   name: g.name,
   img: g.img,
   desc: g.desc,
   exe_path: g.exePath,
-  window_name: g.windowName || g.name   // 🔥 IMPORTANT
+  window_name: g.windowName || g.name   // ðŸ”¥ IMPORTANT
 }))
       );
 
@@ -1553,10 +1717,10 @@ windowName: g.window_name
   });
   // ================= ROOT =================
 app.get("/", (req, res) => {
-  res.send("Server running 🚀");
+  res.send("Server running ðŸš€");
 });
 
-// 👇 ADD HERE (DON'T REMOVE ANYTHING ABOVE)
+// ðŸ‘‡ ADD HERE (DON'T REMOVE ANYTHING ABOVE)
 app.head("/", (req, res) => {
   res.status(200).end();
 });
@@ -1568,3 +1732,5 @@ app.get("/health", (req, res) => {
 app.head("/health", (req, res) => {
   res.status(200).end();
 });
+
+
