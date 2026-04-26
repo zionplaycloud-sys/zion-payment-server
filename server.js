@@ -1466,10 +1466,12 @@ app.post("/release-pc", async (req, res) => {
     }
 
     // 🗑 Remove old session row from sessions table
-    await supabase
-      .from("sessions")
-      .delete()
-      .eq("username", username);
+await supabase
+  .from("sessions")
+  .update({
+    updated_at: new Date()
+  })
+  .eq("username", username);
 
     // 🔓 Remove launch lock too
     delete launchLocks[username];
@@ -1485,7 +1487,7 @@ app.post("/release-pc", async (req, res) => {
       success: false
     });
   }
-});
+}); 
   // ================= GAMES SYSTEM =================
 
   // SAVE GAMES
