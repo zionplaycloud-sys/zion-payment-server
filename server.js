@@ -6,9 +6,10 @@
   import { v4 as uuidv4 } from "uuid";
   import fetch from "node-fetch";
   import bcrypt from "bcrypt";
-
+import { Resend } from "resend";
 
   dotenv.config();
+  const resend = new Resend(process.env.RESEND_API_KEY);
  const activeSessions = {};
  const launchLocks = {};
  let maintenanceMode = false;
@@ -943,24 +944,69 @@ return res.json({
       }
 
       if (plan.kind === "gift_card") {
-        const code = generateVoucherCode();
-        const { error: voucherError } = await supabase
-          .from("vouchers")
-          .insert({
-            code,
-            hours: plan.hours,
-            created_by: username,
-            used: false
-          });
+  const code = generateVoucherCode();
 
-        if (voucherError) {
-          console.log("GIFT VOUCHER CREATE ERROR:", voucherError);
-          return res.sendStatus(500);
-        }
+  const { error: voucherError } = await supabase
+    .from("vouchers")
+    .insert({
+      code,
+      hours: plan.hours,
+      created_by: username,
+      used: false
+    });
 
-        console.log("Gift voucher created:", { username, planId: plan.id, code });
-        return res.sendStatus(200);
-      }
+  if (voucherError) {
+    console.log("GIFT VOUCHER CREATE ERROR:", voucherError);
+    return res.sendStatus(500);
+  }
+
+  console.log("Gift voucher created:", {
+    username,
+    planId: plan.id,
+    code
+  });
+
+  // 🔥 AUTO EMAIL SEND USING RESEND
+  try {
+    await resend.emails.send({
+      from: "Zion Play <onboarding@resend.dev>", // change this to your verified Resend domain
+      to: [username],
+      subject: "Your Zion Play Gift Card Code",
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2 style="color: #00d4ff;">Gift Card Generated</h2>
+
+          <p>Your Zion Play purchase was successful.</p>
+
+          <p><strong>Plan:</strong> ${plan.id}</p>
+          <p><strong>Hours:</strong> ${plan.hours} Hours</p>
+          <p><strong>Voucher Code:</strong> ${code}</p>
+          <p><strong>Purchase Date:</strong> ${new Date().toLocaleDateString("en-IN")}</p>
+          <p><strong>Validity:</strong> No Expiry</p>
+
+          <br>
+
+          <p>Please keep this voucher code safe.</p>
+
+          <p>You can redeem this code inside Zion Play using the Redeem Voucher option.</p>
+
+          <br>
+
+          <p>Thank you for choosing Zion Play.</p>
+
+          <p><strong>— Zion Play Cloud Gaming</strong></p>
+        </div>
+      `
+    });
+
+    console.log("Email sent successfully to:", username);
+
+  } catch (emailError) {
+    console.log("EMAIL SEND ERROR:", emailError);
+  }
+
+  return res.sendStatus(200);
+}
 
       const { data: userBefore } = await supabase
         .from("users")
