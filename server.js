@@ -619,7 +619,8 @@ app.post("/redeem-voucher", async (req, res) => {
     const { data: user, error: userError } = await supabase
       .from("users")
       .select("hours")
-.eq("username", username)      .single();
+      .eq("username", username)
+      .single();
 
     if (userError || !user) {
       return res.json({
@@ -630,13 +631,22 @@ app.post("/redeem-voucher", async (req, res) => {
 
     const newHours = Number(user.hours || 0) + Number(voucher.hours || 0);
 
-    // ➕ Add hours
+    // ➕ Update users table
     await supabase
       .from("users")
       .update({
         hours: newHours
       })
-.eq("username", username)
+      .eq("username", username);
+
+    // ➕ Update sessions table (VERY IMPORTANT)
+    await supabase
+      .from("sessions")
+      .update({
+        time_left: newHours,
+        updated_at: new Date()
+      })
+      .eq("username", username);
 
     // ✅ Mark voucher used
     await supabase
@@ -662,7 +672,6 @@ app.post("/redeem-voucher", async (req, res) => {
     });
   }
 });
-
   // ================= SYSTEM STATE =================
 
   // GET SYSTEM STATE
