@@ -10,7 +10,27 @@
 
   dotenv.config();
  const activeSessions = {};
-  const app = express();
+ const launchLocks = {};
+ let maintenanceMode = false;
+ const loginAttempts = {};
+ const paymentLocks = {};
+ function cleanupOldSessions() {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 mins
+
+  for (const sessionId in activeSessions) {
+    const session = activeSessions[sessionId];
+
+    if (!session.createdAt) continue;
+
+    if (now - session.createdAt > maxAge) {
+      console.log("🧹 Removing stale session:", sessionId);
+
+      delete activeSessions[sessionId];
+    }
+  }
+}
+const app = express();
   app.use(cors());
   app.use(express.json());
 
@@ -29,6 +49,19 @@
     const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     return ok ? email : "";
   }
+
+  function generateVoucherCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = "ZP-";
+
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(
+      Math.floor(Math.random() * chars.length)
+    );
+  }
+
+  return result;
+}
 
   function sanitizePhone(input) {
     const digits = (input || "").toString().replace(/\D/g, "");
@@ -250,7 +283,24 @@ app.post("/signup", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+const userKey = email.toLowerCase();
 
+if (!loginAttempts[userKey]) {
+  loginAttempts[userKey] = {
+    count: 0,
+    lastAttempt: Date.now()
+  };
+}
+
+if (
+  loginAttempts[userKey].count >= 5 &&
+  Date.now() - loginAttempts[userKey].lastAttempt < 15 * 60 * 1000
+) {
+  return res.json({
+    success: false,
+    error: "Too many failed login attempts. Try again in 15 minutes."
+  });
+}
     if (!email || !password) {
       return res.json({ success: false, error: "Missing fields" });
     }
@@ -284,13 +334,25 @@ const { data: user } = await supabase
   .maybeSingle();
 
 if (!user) {
-  return res.json({ success: false });
+  loginAttempts[userKey].count += 1;
+  loginAttempts[userKey].lastAttempt = Date.now();
+
+  return res.json({
+    success: false,
+    error: "Invalid credentials"
+  });
 }
 
 const isMatch = await bcrypt.compare(password, user.password);
 
 if (!isMatch) {
-  return res.json({ success: false });
+  loginAttempts[userKey].count += 1;
+  loginAttempts[userKey].lastAttempt = Date.now();
+
+  return res.json({
+    success: false,
+    error: "Invalid credentials"
+  });
 }
 
 if (!user.referral_code) {
@@ -324,6 +386,10 @@ if (session) {
 
   currentTime = user.hours || 0;
 }
+loginAttempts[userKey] = {
+  count: 0,
+  lastAttempt: Date.now()
+};
 
 return res.json({
   success: true,
@@ -446,6 +512,156 @@ return res.json({
       res.json({ success: false });
     }
   });
+ 
+  // ================= TOGGLE MAINTENANCE =================
+app.post("/toggle-maintenance", async (req, res) => {
+  try {
+    const { enabled } = req.body;
+
+    maintenanceMode = !!enabled;
+
+    console.log("🛠 Maintenance Mode:", maintenanceMode);
+
+    res.json({
+      success: true,
+      maintenanceMode
+    });
+
+  } catch (err) {
+    console.log("TOGGLE MAINTENANCE ERROR:", err);
+
+    res.json({
+      success: false
+    });
+  }
+});
+
+  // ================= generate vouchers =================
+
+app.post("/generate-vouchers", async (req, res) => {
+  try {
+    const voucherList = [];
+
+    for (let i = 0; i < 10; i++) {
+      voucherList.push({
+        code: generateVoucherCode(),
+        hours: 1,
+        created_by: "admin",
+        used: false
+      });
+    }
+
+    const { error } = await supabase
+      .from("vouchers")
+      .insert(voucherList);
+
+    if (error) {
+      console.log("VOUCHER GENERATION ERROR:", error);
+
+      return res.json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.json({
+      success: true,
+      count: 10
+    });
+
+  } catch (err) {
+    console.log("GENERATE VOUCHERS ERROR:", err);
+
+    res.json({
+      success: false
+    });
+  }
+});
+
+  // ================= redeem-voucher =================
+
+app.post("/redeem-voucher", async (req, res) => {
+  try {
+    const { username, code } = req.body;
+
+    if (!username || !code) {
+      return res.json({
+        success: false,
+        error: "Missing fields"
+      });
+    }
+
+    const cleanCode = code.trim().toUpperCase();
+
+    // 🔍 Find voucher
+    const { data: voucher, error: fetchError } = await supabase
+      .from("vouchers")
+      .select("*")
+      .eq("code", cleanCode)
+      .single();
+
+    if (fetchError || !voucher) {
+      return res.json({
+        success: false,
+        error: "Invalid voucher code"
+      });
+    }
+
+    if (voucher.used) {
+      return res.json({
+        success: false,
+        error: "Voucher already used"
+      });
+    }
+
+    // 👤 Get current user
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("hours")
+      .eq("email", username)
+      .single();
+
+    if (userError || !user) {
+      return res.json({
+        success: false,
+        error: "User not found"
+      });
+    }
+
+    const newHours = Number(user.hours || 0) + Number(voucher.hours || 0);
+
+    // ➕ Add hours
+    await supabase
+      .from("users")
+      .update({
+        hours: newHours
+      })
+      .eq("email", username);
+
+    // ✅ Mark voucher used
+    await supabase
+      .from("vouchers")
+      .update({
+        used: true,
+        used_by: username
+      })
+      .eq("code", cleanCode);
+
+    res.json({
+      success: true,
+      addedHours: voucher.hours,
+      totalHours: newHours
+    });
+
+  } catch (err) {
+    console.log("REDEEM VOUCHER ERROR:", err);
+
+    res.json({
+      success: false,
+      error: "Server error"
+    });
+  }
+});
 
   // ================= SYSTEM STATE =================
 
@@ -614,25 +830,44 @@ if (!buyerCredit.success) {
       }
     }
 
-    // =========================
-    // ✅ FINAL LOG
-    // =========================
-    console.log("🔥 SUCCESS:", username, {
-      hours: plan.hours,
-      cashbackPts: plan.cashBackPts
-    });
-
-    res.sendStatus(200);
-
-  } catch (err) {
-    console.log("❌ Webhook error:", err);
-    res.sendStatus(500);
-  }
+   // =========================
+// ✅ FINAL LOG
+// =========================
+console.log("🔥 SUCCESS:", username, {
+  hours: plan.hours,
+  cashbackPts: plan.cashBackPts
 });
 
- app.post("/create-order", async (req, res) => {
+res.sendStatus(200);
+
+} catch (err) {
+  console.log("❌ Webhook error:", err);
+  res.sendStatus(500);
+}
+});
+
+// ================= CREATE ORDER =================
+app.post("/create-order", async (req, res) => {
   try {
+
+    if (maintenanceMode) {
+      return res.json({
+        success: false,
+        error: "Server under maintenance. Payments are temporarily disabled."
+      });
+    }
+
     const { amount, username, paymentEmail, paymentPhone } = req.body;
+
+    if (paymentLocks[username]) {
+      return res.json({
+        success: false,
+        error: "Payment already in progress. Please wait."
+      });
+    }
+
+    paymentLocks[username] = true;
+
     const plan = getPlanByAmount(amount);
     const orderAmount = plan?.amount || Number.NaN;
     const loginEmail = sanitizeEmail(username);
@@ -736,15 +971,24 @@ if (!response.ok) {
 // ✅ SUCCESS LOG
 console.log("✅ Cashfree FULL response:", data);
 
+delete paymentLocks[username];
+
 res.json({
   success: true,
   payment_session_id: data.payment_session_id
 });
 
-  } catch (err) {
-    console.log("CREATE ORDER ERROR:", err);
-    res.json({ success: false });
+ } catch (err) {
+  console.log("CREATE ORDER ERROR:", err);
+
+  const username = req.body?.username;
+
+  if (username) {
+    delete paymentLocks[username];
   }
+
+  res.json({ success: false });
+}
 });
 
   // ================= ADMIN STATS =================
@@ -928,6 +1172,51 @@ return res.json(data);
 app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
+    const existingSession = Object.entries(activeSessions).find(
+  ([id, session]) => session.username === username
+);
+
+if (existingSession) {
+  const [existingSessionId, sessionData] = existingSession;
+
+  console.log("♻️ Reconnecting existing session:", existingSessionId);
+
+  return res.json({
+    success: true,
+    reconnect: true,
+    sessionId: existingSessionId,
+    pc: sessionData.pc,
+    streamBaseUrl
+  });
+}
+if (!username || !game) {
+  return res.json({
+    success: false,
+    error: "Missing required fields"
+  });
+}
+    if (maintenanceMode) {
+      return res.json({
+        success: false,
+        error: "Server under maintenance. Please try again later."
+      });
+    }
+
+    cleanupOldSessions();
+
+    if (
+  launchLocks[username] &&
+  Date.now() - launchLocks[username].createdAt < 2 * 60 * 1000
+) {
+      return res.json({
+        success: false,
+        error: "Launch already in progress"
+      });
+    }
+
+    launchLocks[username] = {
+  createdAt: Date.now()
+};
 
     // ❌ REMOVE THIS (NOT USED ANYMORE)
     // const agentBase = process.env.AGENT_URL;
@@ -951,6 +1240,8 @@ app.post("/assign-pc", async (req, res) => {
 
     if (gameError || !gameData) {
       console.log("❌ Game not found");
+        delete launchLocks[username];
+
       return res.json({ success: false, error: "Game not found" });
     }
 
@@ -962,11 +1253,11 @@ app.post("/assign-pc", async (req, res) => {
 
     // 🔥 EXISTING PC CASE
 if (existing) {
-  activeSessions[sessionId] = {
-    username,
-    pc: existing.name
-  };
-
+activeSessions[sessionId] = {
+  username,
+  pc: existing.name,
+  createdAt: Date.now()
+};
   console.log("🎮 Session created (existing):", sessionId);
 
   try {
@@ -985,7 +1276,7 @@ if (existing) {
     if (!existingAgentResponse.ok) {
       throw new Error("Existing PC launch failed");
     }
-
+delete launchLocks[username];
     return res.json({
       success: true,
       pc: existing.name,
@@ -1020,6 +1311,8 @@ if (existing) {
 .limit(1);
 
     if (!pcs || pcs.length === 0) {
+        delete launchLocks[username];
+
       return res.json({ success: false, error: "No PC available" });
     }
 
@@ -1037,11 +1330,11 @@ if (existing) {
     console.log(`Assigned ${pc.name} to ${username}`);
 
     // 🔥 STORE SESSION
-    activeSessions[sessionId] = {
-      username,
-      pc: pc.name
-    };
-
+activeSessions[sessionId] = {
+  username,
+  pc: pc.name,
+  createdAt: Date.now()
+};
     console.log("🎮 Session created:", sessionId);
 
     // 🔥 SEND TO CORRECT AGENT (THIS IS THE FIX)
@@ -1077,7 +1370,7 @@ if (existing) {
         .eq("id", pc.id);
 
       delete activeSessions[sessionId];
-
+delete launchLocks[username];
       return res.json({
         success: false,
         error: "Agent unavailable. Please try again."
@@ -1085,6 +1378,8 @@ if (existing) {
     }
 
     // ✅ FINAL RESPONSE (ONLY ONCE)
+    delete launchLocks[username];
+
     res.json({
       success: true,
       pc: pc.name,
@@ -1094,7 +1389,44 @@ if (existing) {
 
   } catch (err) {
     console.log("ASSIGN PC ERROR:", err);
+      delete launchLocks[username];
+
     res.json({ success: false });
+  }
+});
+
+// ================= CHECK SESSION =================
+app.post("/check-session", async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.json({
+        success: false,
+        valid: false
+      });
+    }
+
+    if (activeSessions[sessionId]) {
+      return res.json({
+        success: true,
+        valid: true,
+        session: activeSessions[sessionId]
+      });
+    }
+
+    return res.json({
+      success: true,
+      valid: false
+    });
+
+  } catch (err) {
+    console.log("CHECK SESSION ERROR:", err);
+
+    res.json({
+      success: false,
+      valid: false
+    });
   }
 });
 
