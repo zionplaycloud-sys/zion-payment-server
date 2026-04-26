@@ -970,7 +970,7 @@ return res.json({
   try {
     await resend.emails.send({
       from: "Zion Play <onboarding@resend.dev>", // change this to your verified Resend domain
-      to: [username],
+      to: [customerEmail],
       subject: "Your Zion Play Gift Card Code",
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px;">
