@@ -1181,29 +1181,8 @@ return res.json(data);
 app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
-    const existingSession = Object.entries(activeSessions).find(
-  ([id, session]) => session.username === username
-);
 
-if (existingSession) {
-  const [existingSessionId, sessionData] = existingSession;
-
-  console.log("♻️ Reconnecting existing session:", existingSessionId);
-
-  return res.json({
-    success: true,
-    reconnect: true,
-    sessionId: existingSessionId,
-    pc: sessionData.pc,
-    streamBaseUrl
-  });
-}
-if (!username || !game) {
-  return res.json({
-    success: false,
-    error: "Missing required fields"
-  });
-}
+    // 🔥 MAINTENANCE CHECK MUST BE FIRST
     if (maintenanceMode) {
       return res.json({
         success: false,
@@ -1211,6 +1190,31 @@ if (!username || !game) {
       });
     }
 
+    const existingSession = Object.entries(activeSessions).find(
+      ([id, session]) => session.username === username
+    );
+
+    if (existingSession) {
+      const [existingSessionId, sessionData] = existingSession;
+
+      console.log("♻️ Reconnecting existing session:", existingSessionId);
+
+      return res.json({
+        success: true,
+        reconnect: true,
+        sessionId: existingSessionId,
+        pc: sessionData.pc,
+        streamBaseUrl
+      });
+    }
+
+    if (!username || !game) {
+      return res.json({
+        success: false,
+        error: "Missing required fields"
+      });
+    }
+    
     cleanupOldSessions();
 
     if (
