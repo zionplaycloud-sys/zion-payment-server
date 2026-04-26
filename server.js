@@ -1214,7 +1214,7 @@ app.post("/assign-pc", async (req, res) => {
         error: "Missing required fields"
       });
     }
-    
+
     cleanupOldSessions();
 
     if (
@@ -1443,26 +1443,49 @@ app.post("/check-session", async (req, res) => {
   }
 });
 
-  // ================= RELEASE PC =================
-  app.post("/release-pc", async (req, res) => {
-    try {
-      const { username } = req.body;
+// ================= RELEASE PC =================
+app.post("/release-pc", async (req, res) => {
+  try {
+    const { username } = req.body;
 
-      await supabase
-        .from("pcs")
-        .update({
-          status: "free",
-          current_user: null
-        })
-        .eq("current_user", username);
+    // 🔓 Free PC in database
+    await supabase
+      .from("pcs")
+      .update({
+        status: "free",
+        current_user: null
+      })
+      .eq("current_user", username);
 
-      res.json({ success: true });
-
-    } catch (err) {
-      console.log("RELEASE PC ERROR:", err);
-      res.json({ success: false });
+    // 🧹 Remove old active session from memory
+    for (const sessionId in activeSessions) {
+      if (activeSessions[sessionId].username === username) {
+        console.log("🧹 Removing old session:", sessionId);
+        delete activeSessions[sessionId];
+      }
     }
-  });
+
+    // 🗑 Remove old session row from sessions table
+    await supabase
+      .from("sessions")
+      .delete()
+      .eq("username", username);
+
+    // 🔓 Remove launch lock too
+    delete launchLocks[username];
+
+    res.json({
+      success: true
+    });
+
+  } catch (err) {
+    console.log("RELEASE PC ERROR:", err);
+
+    res.json({
+      success: false
+    });
+  }
+});
   // ================= GAMES SYSTEM =================
 
   // SAVE GAMES
