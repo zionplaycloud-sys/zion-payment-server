@@ -6,10 +6,8 @@
   import { v4 as uuidv4 } from "uuid";
   import fetch from "node-fetch";
   import bcrypt from "bcrypt";
-import { Resend } from "resend";
 
   dotenv.config();
-  const resend = new Resend(process.env.RESEND_API_KEY);
  const activeSessions = {};
  const launchLocks = {};
  let maintenanceMode = false;
@@ -25,7 +23,7 @@ import { Resend } from "resend";
     if (!session.createdAt) continue;
 
     if (now - session.createdAt > maxAge) {
-      console.log("ðŸ§¹ Removing stale session:", sessionId);
+      console.log(" Removing stale session:", sessionId);
 
       delete activeSessions[sessionId];
     }
@@ -153,7 +151,7 @@ const app = express();
     hourGrantsTableReady = !error;
 
     if (error) {
-      console.log("âš  user_hour_grants table not available. Expiry tracking disabled.");
+      console.log("user_hour_grants table not available. Expiry tracking disabled.");
     }
 
     return hourGrantsTableReady;
@@ -399,7 +397,7 @@ const newTime = currentTime + Number(addHours || 0);
 
   // ================= ROOT =================
   app.get("/", (req, res) => {
-    res.send("Server running ðŸš€");
+    res.send("Server running ");
   });
 
   // ================= SIGNUP =================
@@ -825,7 +823,56 @@ return res.json({
       res.json({ success: false, error: "Server error" });
     }
   });
+  // ================= purchase history =================
+app.post("/purchase-history", async (req, res) => {
+  try {
+    const { username } = req.body || {};
 
+    if (!username) {
+      return res.json({
+        success: false,
+        error: "Username required"
+      });
+    }
+
+    // Get payment history
+    const { data: payments, error: paymentsError } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("username", username)
+      .order("created_at", { ascending: false });
+
+    // Get voucher history
+    const { data: vouchers, error: vouchersError } = await supabase
+      .from("vouchers")
+      .select("*")
+      .eq("created_by", username)
+      .order("created_at", { ascending: false });
+
+    if (paymentsError || vouchersError) {
+      console.log("PURCHASE HISTORY ERROR:", paymentsError || vouchersError);
+
+      return res.json({
+        success: false,
+        error: "Failed to load purchase history"
+      });
+    }
+
+    return res.json({
+      success: true,
+      payments: payments || [],
+      vouchers: vouchers || []
+    });
+
+  } catch (err) {
+    console.log("PURCHASE HISTORY SERVER ERROR:", err);
+
+    return res.json({
+      success: false,
+      error: "Server error"
+    });
+  }
+});
   // ================= SYSTEM STATE =================
   app.get("/get-system-state", async (req, res) => {
     try {
@@ -965,45 +1012,6 @@ return res.json({
     planId: plan.id,
     code
   });
-
-  // 🔥 AUTO EMAIL SEND USING RESEND
-  try {
-    await resend.emails.send({
-      from: "Zion Play <onboarding@resend.dev>", // change this to your verified Resend domain
-      to: [customerEmail],
-      subject: "Your Zion Play Gift Card Code",
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2 style="color: #00d4ff;">Gift Card Generated</h2>
-
-          <p>Your Zion Play purchase was successful.</p>
-
-          <p><strong>Plan:</strong> ${plan.id}</p>
-          <p><strong>Hours:</strong> ${plan.hours} Hours</p>
-          <p><strong>Voucher Code:</strong> ${code}</p>
-          <p><strong>Purchase Date:</strong> ${new Date().toLocaleDateString("en-IN")}</p>
-          <p><strong>Validity:</strong> No Expiry</p>
-
-          <br>
-
-          <p>Please keep this voucher code safe.</p>
-
-          <p>You can redeem this code inside Zion Play using the Redeem Voucher option.</p>
-
-          <br>
-
-          <p>Thank you for choosing Zion Play.</p>
-
-          <p><strong>— Zion Play Cloud Gaming</strong></p>
-        </div>
-      `
-    });
-
-    console.log("Email sent successfully to:", username);
-
-  } catch (emailError) {
-    console.log("EMAIL SEND ERROR:", emailError);
-  }
 
   return res.sendStatus(200);
 }
@@ -1180,15 +1188,15 @@ const data = await response.json();
 
 // ðŸ”´ ERROR HANDLING
 if (!response.ok) {
-  console.log("âŒ Cashfree error response:", data);
+  console.log("Cashfree error response:", data);
   return res.json({
     success: false,
     error: data?.message || data?.error?.message || "Cashfree order failed"
   });
 }
 
-// âœ… SUCCESS LOG
-console.log("âœ… Cashfree FULL response:", data);
+//SUCCESS LOG
+console.log("Cashfree FULL response:", data);
 
 delete paymentLocks[username];
 
@@ -1228,7 +1236,7 @@ res.json({
           totalHours += user.hours || 0;
           totalPoints += user.pts || 0;
           totalOrders += 1;
-          // Rough estimate: â‚¹100 per hour
+          // Rough estimate: 100 per hour
           totalRevenue += (user.hours || 0) * 100;
         });
       }
@@ -1280,13 +1288,13 @@ app.post("/launch-agent", async (req, res) => {
     const { path, sessionId, windowName: requestedWindowName, game: requestedGameName } = req.body;
 
     if (!path || !sessionId) {
-      console.log("âŒ Missing path or sessionId");
+      console.log("Missing path or sessionId");
       return res.json({ success: false });
     }
 
     console.log("ðŸš€ Launch-agent request:", { path, sessionId });
 
-    // ðŸ”¥ GET GAME FROM DB (to get window_name)
+    //GET GAME FROM DB (to get window_name)
     const { data: game, error } = await supabase
       .from("games")
       .select("*")
@@ -1294,12 +1302,12 @@ app.post("/launch-agent", async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.log("âŒ DB error:", error);
+      console.log("DB error:", error);
       return res.json({ success: false });
     }
 
     if (!game) {
-      console.log("âš ï¸ Game not found for path:", path);
+      console.log("Game not found for path:", path);
     }
 
     const windowName =
@@ -1308,14 +1316,14 @@ app.post("/launch-agent", async (req, res) => {
       requestedGameName ||
       "";
 
-    console.log("ðŸŽ¯ Window target:", windowName);
+    console.log("Window target:", windowName);
 
-    // âš ï¸ Safety log (important for debugging)
+    // Safety log (important for debugging)
     if (!windowName) {
-      console.log("âš ï¸ window_name missing â†’ may capture full screen");
+      console.log("window_name missing  may capture full screen");
     }
 
- // ðŸ”¥ SEND TO AGENT
+ // SEND TO AGENT
 const launchRes = await fetch(`${agentBase}/launch-agent`, {
   method: "POST",
   headers: {
@@ -1328,7 +1336,7 @@ const launchRes = await fetch(`${agentBase}/launch-agent`, {
   })
 });
 
-// ðŸ”¥ SAFE PARSE (IMPORTANT)
+//SAFE PARSE (IMPORTANT)
 const text = await launchRes.text();
 
 let data;
@@ -1336,7 +1344,7 @@ let data;
 try {
   data = JSON.parse(text);
 } catch (err) {
-  console.log("âŒ Agent returned NON-JSON:");
+  console.log("Agent returned NON-JSON:");
   console.log(text.slice(0, 200)); // log first part
 
   return res.json({
@@ -1345,12 +1353,12 @@ try {
   });
 }
 
-console.log("âœ… Agent response:", data);
+console.log(" Agent response:", data);
 
 return res.json(data);
 
   } catch (err) {
-    console.log("âŒ LAUNCH AGENT ERROR:", err);
+    console.log("LAUNCH AGENT ERROR:", err);
     return res.json({ success: false });
   }
 });
@@ -1364,7 +1372,7 @@ return res.json(data);
         return res.json({ success: false, error: "Process name required" });
       }
 
-      // ðŸ”¥ WINDOWS: Kill process by name
+      // WINDOWS: Kill process by name
       exec(`taskkill /IM ${processName}.exe /F`, (error, stdout, stderr) => {
         if (error) {
           console.log("Process kill message:", stderr);
@@ -1392,7 +1400,7 @@ app.post("/assign-pc", async (req, res) => {
   try {
     const { username, game } = req.body;
 
-    // ðŸ”¥ MAINTENANCE CHECK MUST BE FIRST
+    //  MAINTENANCE CHECK MUST BE FIRST
     if (maintenanceMode) {
       return res.json({
         success: false,
@@ -1407,7 +1415,7 @@ app.post("/assign-pc", async (req, res) => {
     if (existingSession) {
       const [existingSessionId, sessionData] = existingSession;
 
-      console.log("â™»ï¸ Reconnecting existing session:", existingSessionId);
+      console.log("Reconnecting existing session:", existingSessionId);
 
       return res.json({
         success: true,
@@ -1441,20 +1449,20 @@ app.post("/assign-pc", async (req, res) => {
   createdAt: Date.now()
 };
 
-    // âŒ REMOVE THIS (NOT USED ANYMORE)
+    // REMOVE THIS (NOT USED ANYMORE)
     // const agentBase = process.env.AGENT_URL;
 
-    // ðŸ” Check if user already has PC
+    //  Check if user already has PC
     const { data: existing } = await supabase
       .from("pcs")
       .select("*")
       .eq("current_user", username)
       .maybeSingle();
 
-    // ðŸ”¥ ALWAYS CREATE NEW SESSION
+    // ALWAYS CREATE NEW SESSION
     const sessionId = uuidv4();
 
-    // ðŸ”¥ GET GAME DATA (IMPORTANT)
+    //  GET GAME DATA (IMPORTANT)
     const { data: gameData, error: gameError } = await supabase
       .from("games")
       .select("*")
@@ -1462,7 +1470,7 @@ app.post("/assign-pc", async (req, res) => {
       .single();
 
     if (gameError || !gameData) {
-      console.log("âŒ Game not found");
+      console.log("Game not found");
         delete launchLocks[username];
 
       return res.json({ success: false, error: "Game not found" });
@@ -1471,17 +1479,17 @@ app.post("/assign-pc", async (req, res) => {
     const exePath = gameData.exe_path;
     const windowName = gameData.window_name;
 
-    console.log("ðŸŽ¯ Game selected:", gameData.name);
-    console.log("ðŸŽ¯ Window target:", windowName);
+    console.log(" Game selected:", gameData.name);
+    console.log(" Window target:", windowName);
 
-    // ðŸ”¥ EXISTING PC CASE
+    // EXISTING PC CASE
 if (existing) {
 activeSessions[sessionId] = {
   username,
   pc: existing.name,
   createdAt: Date.now()
 };
-  console.log("ðŸŽ® Session created (existing):", sessionId);
+  console.log(" Session created (existing):", sessionId);
 
   try {
     const existingAgentResponse = await fetch(`${existing.agent_url}/launch-agent`, {
@@ -1508,9 +1516,9 @@ delete launchLocks[username];
     });
 
   } catch (err) {
-    console.log("âŒ Existing PC failed, releasing stale lock:", err);
+    console.log("Existing PC failed, releasing stale lock:", err);
 
-    // ðŸ”“ Release broken existing lock
+    // Release broken existing lock
     await supabase
       .from("pcs")
       .update({
@@ -1521,11 +1529,11 @@ delete launchLocks[username];
 
     delete activeSessions[sessionId];
 
-    // Continue flow â†’ assign fresh PC
+    // Continue flow  assign fresh PC
   }
 }
 
-    // ðŸ” Find free PC
+    // Find free PC
     const { data: pcs } = await supabase
       .from("pcs")
       .select("*")
@@ -1541,7 +1549,7 @@ delete launchLocks[username];
 
     const pc = pcs[0];
 
-    // ðŸ”’ Mark busy
+    // Mark busy
     await supabase
       .from("pcs")
       .update({
@@ -1552,15 +1560,15 @@ delete launchLocks[username];
 
     console.log(`Assigned ${pc.name} to ${username}`);
 
-    // ðŸ”¥ STORE SESSION
+    // STORE SESSION
 activeSessions[sessionId] = {
   username,
   pc: pc.name,
   createdAt: Date.now()
 };
-    console.log("ðŸŽ® Session created:", sessionId);
+    console.log(" Session created:", sessionId);
 
-    // ðŸ”¥ SEND TO CORRECT AGENT (THIS IS THE FIX)
+    // SEND TO CORRECT AGENT (THIS IS THE FIX)
       try {
       const agentResponse = await fetch(`${pc.agent_url}/launch-agent`, {
         method: "POST",
@@ -1578,12 +1586,12 @@ activeSessions[sessionId] = {
         throw new Error("Agent launch failed");
       }
 
-      console.log("âœ… Session sent to agent:", pc.agent_url);
+      console.log("Session sent to agent:", pc.agent_url);
 
     } catch (err) {
-      console.log("âŒ Agent launch failed, releasing PC:", err);
+      console.log("Agent launch failed, releasing PC:", err);
 
-      // ðŸ”“ AUTO RELEASE FAILED PC
+      // AUTO RELEASE FAILED PC
       await supabase
         .from("pcs")
         .update({
@@ -1600,7 +1608,7 @@ delete launchLocks[username];
       });
     }
 
-    // âœ… FINAL RESPONSE (ONLY ONCE)
+    // FINAL RESPONSE (ONLY ONCE)
     delete launchLocks[username];
 
     res.json({
@@ -1658,7 +1666,7 @@ app.post("/release-pc", async (req, res) => {
   try {
     const { username } = req.body;
 
-    // ðŸ”“ Free PC in database
+    //  Free PC in database
     await supabase
       .from("pcs")
       .update({
@@ -1667,7 +1675,7 @@ app.post("/release-pc", async (req, res) => {
       })
       .eq("current_user", username);
 
-    // ðŸ§¹ Remove old active session from memory
+    //  Remove old active session from memory
     for (const sessionId in activeSessions) {
       if (activeSessions[sessionId].username === username) {
         console.log("ðŸ§¹ Removing old session:", sessionId);
@@ -1675,7 +1683,7 @@ app.post("/release-pc", async (req, res) => {
       }
     }
 
-    // ðŸ—‘ Remove old session row from sessions table
+    // Remove old session row from sessions table
 await supabase
   .from("sessions")
   .update({
@@ -1683,7 +1691,7 @@ await supabase
   })
   .eq("username", username);
 
-    // ðŸ”“ Remove launch lock too
+    //  Remove launch lock too
     delete launchLocks[username];
 
     res.json({
